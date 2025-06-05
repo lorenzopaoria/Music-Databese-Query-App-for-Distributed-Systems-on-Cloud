@@ -1,0 +1,18 @@
+feb 21, 2025 7:48:30 PM com.example.logging.DatabaseAuditLogger logAuthentication
+INFO: [2025-02-21T19:48:30.711498800] Authentication attempt - Client: ad795b0f, Session: null, User: annapistorio@gmail.com, Tipo Utente: premium, Success: true
+feb 21, 2025 7:48:35 PM com.example.logging.DatabaseAuditLogger logQuery
+INFO: [2025-02-21T19:48:35.084318600] Query execution - Session: df02b95d-1697-4344-9e38-79d5f88c2617, Query: select * from contenuto, Success: true
+feb 21, 2025 7:48:36 PM com.example.logging.DatabaseAuditLogger logQuery
+INFO: [2025-02-21T19:48:36.012365200] Query execution - Session: df02b95d-1697-4344-9e38-79d5f88c2617, Query: select * from contenut, Success: false
+feb 21, 2025 7:48:51 PM com.example.logging.DatabaseAuditLogger logAuthentication
+INFO: [2025-02-21T19:48:51.724929800] Authentication attempt - Client: aab7e870, Session: null, User: margheritaursino@gmail.com, Tipo Utente: free, Success: true
+feb 21, 2025 7:48:57 PM com.example.logging.DatabaseAuditLogger logQuery
+INFO: [2025-02-21T19:48:57.210410100] Query execution - Session: 137f5315-b2f1-492b-b926-30d87733b43e, Query: select * from contenuto, Success: true
+feb 21, 2025 7:49:01 PM com.example.logging.DatabaseAuditLogger logQuery
+INFO: [2025-02-21T19:49:01.669692700] Query execution - Session: 137f5315-b2f1-492b-b926-30d87733b43e, Query: delete * from contenuto, Success: false
+feb 25, 2025 5:17:40 PM com.example.logging.DatabaseAuditLogger logAuthentication
+INFO: [2025-02-25T17:17:40.579128300] Authentication attempt - Client: 6ede64fc, Session: null, User: annapistorio@gmail.com, Tipo Utente: premium, Success: true
+feb 25, 2025 5:17:45 PM com.example.logging.DatabaseAuditLogger logQuery
+INFO: [2025-02-25T17:17:45.201415200] Query execution - Session: 198b1bf8-377e-456f-9c26-ed1e8d7b4335, Query: select * from contenuto, Success: true
+feb 25, 2025 5:17:46 PM com.example.logging.DatabaseAuditLogger logQuery
+INFO: [2025-02-25T17:17:46.156032300] Query execution - Session: 198b1bf8-377e-456f-9c26-ed1e8d7b4335, Query: select * from contenut, Success: false
