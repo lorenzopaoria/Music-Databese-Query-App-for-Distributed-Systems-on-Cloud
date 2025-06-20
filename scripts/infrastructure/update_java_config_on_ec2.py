@@ -170,7 +170,7 @@ def update_local_java_config(
 
 def git_commit_and_push():
     subprocess.run(["git", "add", "."], check=True)
-    subprocess.run(["git", "commit", "-m", "test1"], check=True)
+    subprocess.run(["git", "commit", "-m", "AutomaticTest"], check=True)
     subprocess.run(["git", "push"], check=True)
 
 if __name__ == "__main__":
@@ -188,6 +188,15 @@ if __name__ == "__main__":
     DB_PASSWORD = config["db_password"]
 
     print("Starting configuration and deployment process...")
+
+    # Calcola la root del progetto (due livelli sopra lo script)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+
+    # Path ai file di configurazione locali
+    server_config_path = os.path.join(project_root, "mvnProject-Server", "src", "main", "java", "com", "example", "config", "DatabaseConfig.java")
+    server_db_properties_path = os.path.join(project_root, "mvnProject-Server", "src", "main", "java", "com", "example", "config", "database.properties")
+    client_config_path = os.path.join(project_root, "mvnProject-Client", "src", "main", "java", "com", "example", "DatabaseClient.java")
 
     # 1. Configure and Deploy the Server Instance
     print("\nAttempting to configure and deploy the Server EC2 instance...")
