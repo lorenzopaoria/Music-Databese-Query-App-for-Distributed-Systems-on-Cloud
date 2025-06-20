@@ -1,0 +1,13 @@
+{
+    "server_public_ip": "98.82.10.63",
+    "server_private_ip": "172.31.81.59",
+    "client_public_ips": [
+        "3.90.7.13",
+        "44.201.76.66"
+    ],
+    "rds_endpoint": "music-db-app-rds.cflenc1uoxga.us-east-1.rds.amazonaws.com",
+    "db_username": "dbadmin",
+    "db_password": "12345678",
+    "db_name": "musicdb",
+    "key_pair_name": "my-ec2-key"
+}
