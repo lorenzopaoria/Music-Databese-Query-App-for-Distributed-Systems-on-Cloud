@@ -173,6 +173,30 @@ def git_commit_and_push():
     subprocess.run(["git", "commit", "-m", "AutomaticTest"], check=True)
     subprocess.run(["git", "push"], check=True)
 
+def git_pull_on_ec2(ec2_public_ip, key_pair_path, repo_url, repo_dir):
+    """Effettua git pull (o clone se necessario) sulla EC2 indicata."""
+    try:
+        key = paramiko.RSAKey.from_private_key_file(key_pair_path)
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh_client.connect(hostname=ec2_public_ip, username='ec2-user', pkey=key, timeout=60)
+        print(f"SSH connection established to {ec2_public_ip} for git pull/clone.")
+
+        # Se la directory esiste, fai pull, altrimenti clone
+        check_dir_cmd = f"if [ -d {repo_dir} ]; then echo 'exists'; else echo 'not_exists'; fi"
+        result = run_remote_command(ssh_client, check_dir_cmd).strip()
+        if result == "exists":
+            print(f"Repo directory {repo_dir} exists, running git pull...")
+            run_remote_command(ssh_client, "git pull", cwd=repo_dir)
+        else:
+            print(f"Repo directory {repo_dir} does not exist, running git clone...")
+            run_remote_command(ssh_client, f"git clone {repo_url} {repo_dir}", cwd="/home/ec2-user")
+
+    finally:
+        if 'ssh_client' in locals() and ssh_client:
+            ssh_client.close()
+            print(f"SSH connection to {ec2_public_ip} closed.")
+
 if __name__ == "__main__":
     # Carica la configurazione dal file JSON
     with open("deploy_config.json", "r") as f:
@@ -249,3 +273,9 @@ if __name__ == "__main__":
 
     # 3. Connetti via SSH e clona la repo sulle EC2 (usa git clone o git pull)
     # ...qui puoi riadattare la funzione update_java_config_on_ec2 per fare solo git clone/pull e build...
+    # Sostituisci con il tuo vero repo_url (SSH, es: git@github.com:utente/repo.git)
+    repo_url = "git@github.com:lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git"
+    repo_dir = "/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud"
+
+    git_pull_on_ec2(SERVER_EC2_PUBLIC_IP, KEY_PAIR_PATH, repo_url, repo_dir)
+    git_pull_on_ec2(CLIENT_EC2_PUBLIC_IP, KEY_PAIR_PATH, repo_url, repo_dir)
