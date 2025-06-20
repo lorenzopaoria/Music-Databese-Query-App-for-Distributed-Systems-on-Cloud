@@ -11,13 +11,9 @@ This repository contains the files for a database project that models a music st
 The music streaming platform database project includes the following key components:
 
 1. **Entity-Relationship (ER) Diagram**: A visual representation of the database schema, showing the entities, their attributes, and the relationships between them.
-
 2. **Database Schema**: The detailed SQL code for creating the database schema, including tables, columns, data types, constraints, and relationships.
-
 3. **Sample Data**: A set of sample data that can be used to populate the database and test the application's functionality.
-
 4. **SQL Queries**: A collection of SQL queries that demonstrate how to perform various operations on the database, such as inserting, updating, deleting, and querying data.
-
 5. **Database Management Scripts**: Scripts for managing the database, such as backup, restore, and optimization procedures.
 
 ## Getting Started
@@ -29,19 +25,14 @@ To get started with the music streaming platform database project, follow these 
    ```
    git clone https://github.com/lorenzopaoria/Database-Project-Music-Streaming-Platform.git
    ```
-
 2. Navigate to the cloned repository:
 
    ```
    cd Database-Project-Music-Streaming-Platform
    ```
-
 3. Review the project files, including the ER diagram, database schema, sample data, and SQL queries.
-
 4. Use the provided SQL scripts to create the database schema and populate it with the sample data.
-
 5. Explore the SQL queries and modify them as needed to perform various operations on the database.
-
 6. Customize the database schema and queries to fit your specific requirements for the music streaming platform.
 
 ## Maven Installation
@@ -58,30 +49,41 @@ To use Maven in your project, you first need to install it. Follow these steps t
    ```bash
    mvn -v
 
+   ```
+
 You should see the installed version of Maven.
 
 ### 2. Running Profiles with Maven
 
-Maven allows you to use profiles to configure various aspects of the build process, such as dependencies, plugins, and properties. To run a specific profile, you can use the mvn command with the -P option. 
+Maven allows you to use profiles to configure various aspects of the build process, such as dependencies, plugins, and properties. To run a specific profile, you can use the mvn command with the -P option.
 
 First, go in to mvnProject directory and execute the following command to clean and install dependencies:
+
 ```
 mvn clean install
-   ```
+```
+
 To run a profile defined in the pom.xml file, use the following command:
- ```
+
+```
  mvn -Pserver exec:java
-   ```
+```
+
 If you need to run a different profile, such as clientTest, you can specify it like this:
 
- ```
+```
  mvn -Pclient exec:java
-   ```
+```
+
 If you need to run a GUI profile, such as client, you can specify it like this:
 
- ```
+```
  mvn -Pgui exec:java
-   ```
+```
+
+## First start
+
+Run ec2_start.py, update ip o config ssh on vscode, update credential in .aws
 
 ## Contributing
 

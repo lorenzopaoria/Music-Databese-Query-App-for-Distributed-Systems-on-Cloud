@@ -1,5 +1,3 @@
-CREATE DATABASE piattaforma_streaming_musicale;
-
 CREATE TABLE IF NOT EXISTS Artista ( 
     nomeArtista VARCHAR(100) NOT NULL,
     PRIMARY KEY (nomeArtista)
