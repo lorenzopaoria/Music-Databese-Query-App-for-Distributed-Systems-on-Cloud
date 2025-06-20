@@ -1,6 +1,9 @@
 import paramiko
 import time
 import os
+import subprocess
+import re
+import json
 
 def run_remote_command(ssh_client, command, cwd=None):
     """Executes a command on the remote EC2 instance with an optional working directory."""
@@ -120,27 +123,69 @@ def update_java_config_on_ec2(
             print(f"--- SSH connection to {ec2_public_ip} closed. ---")
             ssh_client.close()
 
+def update_local_java_config(
+    server_ip, server_port, rds_endpoint, db_username, db_password,
+    client_server_ip, client_server_port,
+    server_config_path, server_db_properties_path, client_config_path
+):
+    # Aggiorna DatabaseConfig.java
+    with open(server_config_path, "r") as f:
+        content = f.read()
+    content = re.sub(r'public static final String SERVER_IP = ".*";',
+                     f'public static final String SERVER_IP = "{server_ip}";', content)
+    content = re.sub(r'public static final int SERVER_PORT = .*;',
+                     f'public static final int SERVER_PORT = {server_port};', content)
+    content = re.sub(r'public static final String DATABASE_URL = ".*";',
+                     f'public static final String DATABASE_URL = "jdbc:postgresql://{rds_endpoint}:5432/musicdb";', content)
+    content = re.sub(r'public static final String DB_USERNAME = ".*";',
+                     f'public static final String DB_USERNAME = "{db_username}";', content)
+    content = re.sub(r'public static final String DB_PASSWORD = ".*";',
+                     f'public static final String DB_PASSWORD = "{db_password}";', content)
+    with open(server_config_path, "w") as f:
+        f.write(content)
+
+    # Aggiorna database.properties
+    with open(server_db_properties_path, "r") as f:
+        lines = f.readlines()
+    with open(server_db_properties_path, "w") as f:
+        for line in lines:
+            if line.startswith("url="):
+                f.write(f"url=jdbc:postgresql://{rds_endpoint}:5432/musicdb\n")
+            elif line.startswith("username="):
+                f.write(f"username={db_username}\n")
+            elif line.startswith("password="):
+                f.write(f"password={db_password}\n")
+            else:
+                f.write(line)
+
+    # Aggiorna DatabaseClient.java
+    with open(client_config_path, "r") as f:
+        content = f.read()
+    content = re.sub(r'public static final String SERVER_HOST = ".*";',
+                     f'public static final String SERVER_HOST = "{client_server_ip}";', content)
+    content = re.sub(r'public static final int SERVER_PORT = .*;',
+                     f'public static final int SERVER_PORT = {client_server_port};', content)
+    with open(client_config_path, "w") as f:
+        f.write(content)
+
+def git_commit_and_push():
+    subprocess.run(["git", "add", "."], check=True)
+    subprocess.run(["git", "commit", "-m", "test1"], check=True)
+    subprocess.run(["git", "push"], check=True)
+
 if __name__ == "__main__":
-    # --- CONFIGURE THESE VARIABLES ---
-    # These must be filled with actual values after running deploy_music_app.py
-    # and obtaining the outputs.
-    SERVER_EC2_PUBLIC_IP = "3.83.191.177" # E.g., "3.85.123.45"
-    SERVER_EC2_PRIVATE_IP = "172.31.82.70" # E.g., "172.31.X.X"
+    # Carica la configurazione dal file JSON
+    with open("deploy_config.json", "r") as f:
+        config = json.load(f)
 
-    # Client EC2 details (pick one if multiple clients are deployed)
-    CLIENT_EC2_PUBLIC_IP = "44.211.67.168" # E.g., "54.166.67.89"
-
-    # Common parameters
-    # Ensure this path is correct, e.g., "C:\\Users\\youruser\\.ssh\\my-ec2-key.pem"
-    # or "./my-ec2-key.pem" if in the same directory as the script.
-    KEY_PAIR_PATH = "my-ec2-key.pem" 
-    SERVER_APPLICATION_PORT = "8080" # Standard port for the Java server app
-
-    # RDS Database details (only for the server instance)
-    RDS_ENDPOINT = "music-db-app-rds.cflenc1uoxga.us-east-1.rds.amazonaws.com" # E.g., "music-db-app-rds.abcdefghijk.us-east-1.rds.amazonaws.com"
-    DB_USERNAME = "dbadmin"
-    DB_PASSWORD = "12345678" # !!! CAMBIA QUESTA PASSWORD CON UNA ROBUSTA E UNICA PER PRODUZIONE !!!
-    # -----------------------------------
+    SERVER_EC2_PUBLIC_IP = config["server_public_ip"]
+    SERVER_EC2_PRIVATE_IP = config["server_private_ip"]
+    CLIENT_EC2_PUBLIC_IP = config["client_public_ips"][0] # o scegli quello che vuoi
+    KEY_PAIR_PATH = config["key_pair_name"] + ".pem"
+    SERVER_APPLICATION_PORT = "8080"
+    RDS_ENDPOINT = config["rds_endpoint"]
+    DB_USERNAME = config["db_username"]
+    DB_PASSWORD = config["db_password"]
 
     print("Starting configuration and deployment process...")
 
@@ -175,3 +220,23 @@ if __name__ == "__main__":
         
     except Exception as e:
         print(f"An error occurred during the main deployment process: {e}")
+
+    # 1. Aggiorna i file localmente
+    update_local_java_config(
+        server_ip=SERVER_EC2_PRIVATE_IP,
+        server_port=SERVER_APPLICATION_PORT,
+        rds_endpoint=RDS_ENDPOINT,
+        db_username=DB_USERNAME,
+        db_password=DB_PASSWORD,
+        client_server_ip=SERVER_EC2_PUBLIC_IP,
+        client_server_port=SERVER_APPLICATION_PORT,
+        server_config_path=server_config_path,
+        server_db_properties_path=server_db_properties_path,
+        client_config_path=client_config_path
+    )
+
+    # 2. Commit e push su git
+    git_commit_and_push()
+
+    # 3. Connetti via SSH e clona la repo sulle EC2 (usa git clone o git pull)
+    # ...qui puoi riadattare la funzione update_java_config_on_ec2 per fare solo git clone/pull e build...

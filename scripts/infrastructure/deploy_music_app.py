@@ -2,6 +2,7 @@ import boto3
 import time
 import os
 import psycopg2
+import json
 from botocore.exceptions import ClientError
 
 # --- Configurazione AWS ---
@@ -903,6 +904,21 @@ def main():
         print(f"\nIP Pubblico Server EC2: {server_public_ip}")
         print(f"IP Privato Server EC2 (per client nella stessa VPC): {server_private_ip}")
         print(f"IP Pubblici Client EC2: {client_public_ips}")
+
+        # Salva la configurazione in un file JSON
+        config = {
+            "server_public_ip": server_public_ip,
+            "server_private_ip": server_private_ip,
+            "client_public_ips": client_public_ips,
+            "rds_endpoint": rds_endpoint,
+            "db_username": DB_MASTER_USERNAME,
+            "db_password": DB_MASTER_PASSWORD,
+            "db_name": DB_NAME,
+            "key_pair_name": key_pair_name_actual
+        }
+        with open("deploy_config.json", "w") as f:
+            json.dump(config, f, indent=4)
+        print("\nConfigurazione salvata in 'deploy_config.json'.")
 
         print("\n--- Prossimi Passi (Manuali o Automation Tool) ---")
         print("1. Connettiti all'istanza 'MusicAppServer' via SSH:")
