@@ -5,123 +5,160 @@ import psycopg2
 from botocore.exceptions import ClientError
 
 # --- Configurazione AWS ---
-REGION = 'us-east-1'  # Sostituisci con la tua regione AWS preferita (es. 'eu-west-1' per Irlanda)
-KEY_PAIR_NAME = 'my-ec2-key' # Sostituisci con il nome della tua chiave EC2. Se non esiste, verrà creata.
-AMI_ID = 'ami-053b0a701833e7264' # AMI di Ubuntu Server 22.04 LTS (HVM), SSD Volume Type. Verifica l'AMI più recente per la tua regione!
-INSTANCE_TYPE = 't2.micro' # Tipo di istanza EC2
+REGION = 'us-east-1'
+KEY_PAIR_NAME = 'my-ec2-key'
+AMI_ID = 'ami-09e6f87a47903347c'
+INSTANCE_TYPE = 't2.micro'
 NUM_CLIENTS = 2
 
 # --- Configurazione Database RDS (PostgreSQL) ---
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
 DB_ENGINE = 'postgres'
-DB_ENGINE_VERSION = '17.4' # Aggiornato con l'ultima versione che hai indicato
+DB_ENGINE_VERSION = '17.4' # Assicurati che questa versione sia supportata da RDS nella tua regione
 DB_INSTANCE_CLASS = 'db.t3.micro' # Tipo di istanza RDS
 DB_ALLOCATED_STORAGE = 20 # GB
 DB_MASTER_USERNAME = 'dbadmin' # Aggiornato con il nome utente non riservato
 DB_MASTER_PASSWORD = '12345678' # !!! CAMBIA QUESTA PASSWORD CON UNA ROBUSTA E UNICA !!!
 DB_NAME = 'musicdb' # Nome del database all'interno di PostgreSQL
-DB_PORT = 5432 # Porta standard di PostgreSQL
 
-# --- Repository GitHub ---
-GITHUB_REPO_URL = 'https://github.com/lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git'
-REPO_ROOT_DIR = 'Music-Databese-Query-App-for-Distributed-Systems-on-Cloud' # Nome della directory dopo il clone
-SERVER_PROJECT_DIR = 'mvnProject-Server'
-CLIENT_PROJECT_DIR = 'mvnProject-Client'
 
-# --- Contenuto di schema.sql (Recuperato dal repository) ---
+# --- SQL per Schema (Corretto per PostgreSQL con virgolette doppie e tabelle appropriate) ---
 SCHEMA_SQL_CONTENT = """
-CREATE TABLE IF NOT EXISTS album (
-    albumId SERIAL PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    releaseDate DATE,
-    genre VARCHAR(50),
-    label VARCHAR(100)
+-- Tabelle principali senza dipendenze immediate o che sono referenziate per prime
+CREATE TABLE IF NOT EXISTS "Tipo_Utente" (
+    "tipo" VARCHAR(50) PRIMARY KEY -- Assumendo 'premium'/'free' come chiave primaria stringa
 );
 
-CREATE TABLE IF NOT EXISTS artist (
-    artistId SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    country VARCHAR(100),
-    birthDate DATE
+CREATE TABLE IF NOT EXISTS utente (
+    "email" VARCHAR(255) PRIMARY KEY,
+    "nome" VARCHAR(255) NOT NULL,
+    "cognome" VARCHAR(255) NOT NULL,
+    "passw" VARCHAR(255) NOT NULL,
+    "tipo" VARCHAR(50),
+    "num_telefono" VARCHAR(20),
+    "cf" VARCHAR(16) UNIQUE,
+    FOREIGN KEY ("tipo") REFERENCES "Tipo_Utente"("tipo") ON DELETE SET NULL
 );
 
-CREATE TABLE IF NOT EXISTS song (
-    songId SERIAL PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    duration INT, -- Duration in seconds
-    albumId INT,
-    artistId INT,
-    FOREIGN KEY (albumId) REFERENCES album(albumId) ON DELETE SET NULL,
-    FOREIGN KEY (artistId) REFERENCES artist(artistId) ON DELETE SET NULL
+CREATE TABLE IF NOT EXISTS Artista ( -- Notare la maiuscola, manterrò per consistenza con i dati forniti
+    "nomeArtista" VARCHAR(255) PRIMARY KEY
 );
 
-CREATE TABLE IF NOT EXISTS playlist (
-    playlistId SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    creationDate DATE
+-- Correzione: La tabella Album che usa nomeArtista e titolo come PK
+CREATE TABLE IF NOT EXISTS Album ( -- Notare la maiuscola, come nei tuoi INSERT
+    "nomeArtista" VARCHAR(255),
+    "titolo" VARCHAR(255),
+    "data_pubblicazione" DATE,
+    "num_tracce" INT,
+    PRIMARY KEY ("nomeArtista", "titolo"), -- Chiave primaria composta
+    FOREIGN KEY ("nomeArtista") REFERENCES Artista("nomeArtista") ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS playlist_song (
-    playlistId INT,
-    songId INT,
-    PRIMARY KEY (playlistId, songId),
-    FOREIGN KEY (playlistId) REFERENCES playlist(playlistId) ON DELETE CASCADE,
-    FOREIGN KEY (songId) REFERENCES song(songId) ON DELETE CASCADE
+CREATE TABLE IF NOT EXISTS contenuto (
+    "idContenuto" SERIAL PRIMARY KEY,
+    "nome" VARCHAR(255) NOT NULL,
+    "duarata" INT, -- Assumo 'duarata' sia un refuso per 'durata'
+    "riproduzione" INT,
+    "tipo" INT -- Assumo che questo si riferisca a Tipo_Contenuto, ma non è una FK esplicita nei dati forniti
 );
 
--- Inserimento di dati di esempio
-INSERT INTO album (title, releaseDate, genre, label) VALUES
-('The Dark Side of the Moon', '1973-03-01', 'Progressive Rock', 'Harvest'),
-('Thriller', '1982-11-30', 'Pop', 'Epic'),
-('Back in Black', '1980-07-25', 'Hard Rock', 'Atlantic'),
-('Nevermind', '1991-09-24', 'Grunge', 'DGC');
+CREATE TABLE IF NOT EXISTS "Crea_Contenuto" (
+    "idContenuto" INT,
+    "nomeArtista" VARCHAR(255),
+    PRIMARY KEY ("idContenuto", "nomeArtista"),
+    FOREIGN KEY ("idContenuto") REFERENCES contenuto("idContenuto") ON DELETE CASCADE,
+    FOREIGN KEY ("nomeArtista") REFERENCES Artista("nomeArtista") ON DELETE CASCADE
+);
 
-INSERT INTO artist (name, country, birthDate) VALUES
-('Pink Floyd', 'United Kingdom', NULL),
-('Michael Jackson', 'USA', '1958-08-29'),
-('AC/DC', 'Australia', NULL),
-('Nirvana', 'USA', NULL);
+CREATE TABLE IF NOT EXISTS "Tipo_Contenuto" (
+    "idTipoContenuto" SERIAL PRIMARY KEY,
+    "tipo" VARCHAR(50) NOT NULL
+);
 
-INSERT INTO song (title, duration, albumId, artistId) VALUES
-('Speak to Me', 180, 1, 1),
-('Breathe', 163, 1, 1),
-('Billie Jean', 294, 2, 2),
-('Beat It', 258, 2, 2),
-('Hells Bells', 309, 3, 3),
-('Shoot to Thrill', 317, 3, 3),
-('Smells Like Teen Spirit', 301, 4, 4),
-('Come As You Are', 218, 4, 4);
+CREATE TABLE IF NOT EXISTS Genere (
+    "idGenere" SERIAL PRIMARY KEY,
+    "genere" VARCHAR(50) NOT NULL UNIQUE
+);
 
-INSERT INTO playlist (name, creationDate) VALUES
-('My Rock Favorites', '2023-01-15'),
-('80s Pop Hits', '2023-02-20');
+CREATE TABLE IF NOT EXISTS "Preferenza_Genere" (
+    "email" VARCHAR(255),
+    "idGenere" INT,
+    PRIMARY KEY ("email", "idGenere"),
+    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE,
+    FOREIGN KEY ("idGenere") REFERENCES Genere("idGenere") ON DELETE CASCADE
+);
 
-INSERT INTO playlist_song (playlistId, songId) VALUES
-(1, 1), (1, 2), (1, 5), (1, 6), (1, 7), (1, 8),
-(2, 3), (2, 4);
+CREATE TABLE IF NOT EXISTS "playlist_utente" (
+    "email" VARCHAR(255),
+    "nomePlaylist" VARCHAR(255),
+    "num_tracce_P" INT,
+    PRIMARY KEY ("email", "nomePlaylist"),
+    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS Abbonamento (
+    "idAbbonamento" SERIAL PRIMARY KEY,
+    "tipo" VARCHAR(50),
+    "email" VARCHAR(255),
+    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE,
+    FOREIGN KEY ("tipo") REFERENCES "Tipo_Utente"("tipo") ON DELETE SET NULL -- SET NULL perché "tipo" può non esistere per l'FK
+);
+
+CREATE TABLE IF NOT EXISTS "contenuti_playlist" (
+    "idContenuto" INT,
+    "nomePlaylist" VARCHAR(255),
+    "email" VARCHAR(255),
+    PRIMARY KEY ("idContenuto", "nomePlaylist", "email"),
+    FOREIGN KEY ("idContenuto") REFERENCES contenuto("idContenuto") ON DELETE CASCADE,
+    FOREIGN KEY ("email", "nomePlaylist") REFERENCES "playlist_utente"("email", "nomePlaylist") ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "Metodo_Di_Pagamento" (
+    "idMet_Pag" SERIAL PRIMARY KEY,
+    "CVV" INT,
+    "num_carta" BIGINT UNIQUE,
+    "data_scadenza" DATE,
+    "email" VARCHAR(255) UNIQUE,
+    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS pagamento (
+    "idAbbonamento" INT,
+    "data" DATE,
+    "email" VARCHAR(255),
+    PRIMARY KEY ("idAbbonamento", "email", "data"), -- Aggiunto 'data' per unicità se un utente paga più abbonamenti nel tempo
+    FOREIGN KEY ("idAbbonamento") REFERENCES Abbonamento("idAbbonamento") ON DELETE CASCADE,
+    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "Riproduzione_Contenuto" (
+    "idContenuto" INT,
+    "email" VARCHAR(255),
+    "data" DATE,
+    PRIMARY KEY ("idContenuto", "email", "data"),
+    FOREIGN KEY ("idContenuto") REFERENCES contenuto("idContenuto") ON DELETE CASCADE,
+    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
+);
 """
 
-# --- Contenuto di dati.sql (Fornito dall'utente) ---
 DATI_SQL_CONTENT = """
-INSERT INTO utente(`email`, `nome`, `cognome`, `passw`, `tipo`, `num_telefono`, `cf`)
-VALUES
-('margheritaursino@gmail.com', 'margherita', 'ursino', 'marghe02', 0, '3398423455', 'MRGURSN015H865R'),
-('benedettostraquadanio@gmail.com', 'benedetto', 'straquadanio', 'bene03', 1, '3397534691', 'BNDT02S1412H534T'),
-('mariorossi@gmail.com', 'mario', 'rossi', 'rossi04', 0, '3317212117', 'MRRSSQ86SH152S'),
-('annapistorio@gmail.com', 'anna', 'pistorio', 'anna04', 1, '3324621589', 'NPSTRQ99S54H563R'),
-('robertarusso@gmail.com', 'roberta', 'russo', 'russo07', 0, '3341256355', 'RBRTRS01F34H154S'),
-('federicafirrito@gmail.com', 'federica', 'firrito', 'fede88', 1, '3362145711', 'FDRCFR02S10H163S');
+-- Nota: L'ordine degli INSERT è cruciale. Le tabelle referenziate devono essere popolate per prime.
 
-INSERT INTO Tipo_Utente(`tipo`)
+INSERT INTO "Tipo_Utente"("tipo")
 VALUES
 ('premium'),
-('premium'),
-('premium'),
-('free'),
-('free'),
 ('free');
 
-INSERT INTO contenuto(`nome`, `duarata`, `riproduzione`, `tipo`)
+INSERT INTO utente("email", "nome", "cognome", "passw", "tipo", "num_telefono", "cf")
+VALUES
+('margheritaursino@gmail.com', 'margherita', 'ursino', 'marghe02', 'free', '3398423455', 'MRGURSN015H865R'),
+('benedettostraquadanio@gmail.com', 'benedetto', 'straquadanio', 'bene03', 'premium', '3397534691', 'BNDT02S1412H534T'),
+('mariorossi@gmail.com', 'mario', 'rossi', 'rossi04', 'free', '3317212117', 'MRRSSQ86SH152S'),
+('annapistorio@gmail.com', 'anna', 'pistorio', 'anna04', 'premium', '3324621589', 'NPSTRQ99S54H563R'),
+('robertarusso@gmail.com', 'roberta', 'russo', 'russo07', 'free', '3341256355', 'RBRTRS01F34H154S'),
+('federicafirrito@gmail.com', 'federica', 'firrito', 'fede88', 'premium', '3362145711', 'FDRCFR02S10H163S');
+
+INSERT INTO contenuto("nome", "duarata", "riproduzione", "tipo")
 VALUES
 ('bello', 215, 0, 0),
 ('podcast tranquillo', 1024, 0, 1),
@@ -134,7 +171,20 @@ VALUES
 ('muschio', 2215, 0, 1),
 ('risica', 206, 0, 0);
 
-INSERT INTO Crea_Contenuto(`idContenuto`,`nomeArtista`)
+INSERT INTO Artista("nomeArtista")
+VALUES
+('joji'),
+('baffo'),
+('another love'),
+('bello figo gu'),
+('alaimo'),
+('perry'),
+('toto'),
+('tha supreme'),
+('selvaggio'),
+('non rosica');
+
+INSERT INTO "Crea_Contenuto"("idContenuto", "nomeArtista")
 VALUES
 (1,'joji'),
 (2,'baffo'),
@@ -147,7 +197,7 @@ VALUES
 (9,'selvaggio'),
 (10,'non rosica');
 
-INSERT INTO Tipo_Contenuto(`idTipoContenuto`,`tipo`)
+INSERT INTO "Tipo_Contenuto"("idTipoContenuto", "tipo")
 VALUES
 (1,'brano'),
 (2,'podcast'),
@@ -160,16 +210,7 @@ VALUES
 (9,'podcast'),
 (10,'brano');
 
-INSERT INTO Preferenza_Genere(`email`, `idGenere`)
-VALUES
-('margheritaursino@gmail.com',  1),
-('benedettostraquadanio@gmail.com', 1),
-('mariorossi@gmail.com', 3),
-('annapistorio@gmail.com', 2),
-('robertarusso@gmail.com', 7),
-('federicafirrito@gmail.com', 5);
-
-INSERT INTO Genere(`idGenere`, `genere`)
+INSERT INTO Genere("idGenere", "genere")
 VALUES
 (1,'classica'),
 (2,'rock'),
@@ -182,7 +223,16 @@ VALUES
 (9,'folk'),
 (10,'folklore');
 
-INSERT INTO playlist(`email`, `nomePlaylist`,`num_tracce_P`)
+INSERT INTO "Preferenza_Genere"("email", "idGenere")
+VALUES
+('margheritaursino@gmail.com', 1),
+('benedettostraquadanio@gmail.com', 1),
+('mariorossi@gmail.com', 3),
+('annapistorio@gmail.com', 2),
+('robertarusso@gmail.com', 7),
+('federicafirrito@gmail.com', 5);
+
+INSERT INTO "playlist_utente"("email", "nomePlaylist", "num_tracce_P")
 VALUES
 ('benedettostraquadanio@gmail.com', 'tempo libero', 5),
 ('annapistorio@gmail.com', 'passatempo', 3),
@@ -196,46 +246,13 @@ VALUES
 ('annapistorio@gmail.com', 'lettura', 6),
 ('federicafirrito@gmail.com', 'relazionefinita', 9);
 
-INSERT INTO Artista(`nomeArtista`)
-VALUES
-('joji'),
-('baffo'),
-('another love'),
-('bello figo gu'),
-('alaimo'),
-('perry'),
-('toto'),
-('tha supreme'),
-('selvaggio'),
-('non rosica');
-
-INSERT INTO Appartiene_Genere(`idGenere`, `idContenuto`)
-VALUES
-(3,1),
-(1,2),
-(5,3),
-(6,4),
-(3,5),
-(9,6),
-(7,9),
-(2,7),
-(6,8),
-(9,10);
-
-INSERT INTO Abbonamento(`idAbbonamento`, `tipo`,`email`)
+INSERT INTO Abbonamento("idAbbonamento", "tipo", "email")
 VALUES
 (1,'premium','benedettostraquadanio@gmail.com'),
 (2,'premium','federicafirrito@gmail.com'),
-(3,'premium','annapistorio@gmail.com'),
-(4,'premium','benedettostraquadanio@gmail.com'),
-(5,'premium','federicafirrito@gmail.com'),
-(6,'premium','benedettostraquadanio@gmail.com'),
-(7,'premium','federicafirrito@gmail.com'),
-(8,'premium','annapistorio@gmail.com'),
-(9,'premium','annapistorio@gmail.com'),
-(10,'premium','federicafirrito@gmail.com');
+(3,'premium','annapistorio@gmail.com');
 
-INSERT INTO Album(`nomeArtista`, `titolo`,`data_pubblicazione`,`num_tracce`)
+INSERT INTO Album("nomeArtista", "titolo","data_pubblicazione","num_tracce")
 VALUES
 ('alaimo','DBS', '2006/11/15','15'),
 ('another love','love','2015/05/22','7'),
@@ -254,7 +271,7 @@ VALUES
 ('baffo','pelle','2000/02/02','6'),
 ('another love','distorsione','2022/12/22','7');
 
-INSERT INTO contenuti_playlist(`idContenuto`, `nomePlaylist`, `email`)
+INSERT INTO "contenuti_playlist"("idContenuto", "nomePlaylist", "email")
 VALUES
 (1, 'tempo libero','benedettostraquadanio@gmail.com'),
 (1, 'passatempo','annapistorio@gmail.com'),
@@ -323,19 +340,19 @@ VALUES
 (1, 'relazionefinita', 'federicafirrito@gmail.com'),
 (10, 'relazionefinita', 'federicafirrito@gmail.com');
 
-INSERT INTO Metodo_Di_Pagamento(`idMet_Pag`, `CVV`, `num_carta`,`data_scadenza`, `email`)
+INSERT INTO "Metodo_Di_Pagamento"("idMet_Pag", "CVV", "num_carta", "data_scadenza", "email")
 VALUES
 (1,123,123145874125,'2024/12/05','annapistorio@gmail.com'),
 (2,456,156423451539,'2023/11/11','benedettostraquadanio@gmail.com'),
 (3,789,752315249854,'2026/05/15','federicafirrito@gmail.com');
 
-INSERT INTO pagamento(`idAbbonamento`, `data`, `email`)
+INSERT INTO pagamento("idAbbonamento", "data", "email")
 VALUES
 (1,'2023/02/15','benedettostraquadanio@gmail.com'),
 (2,'2023/02/02','annapistorio@gmail.com'),
 (3,'2023/02/11','federicafirrito@gmail.com');
 
-INSERT INTO Riproduzione_Contenuto(`idContenuto`, `email`, `data`)
+INSERT INTO "Riproduzione_Contenuto"("idContenuto", "email", "data")
 VALUES
 (1,'benedettostraquadanio@gmail.com','2023/02/22'),
 (4,'annapistorio@gmail.com','2023/02/04'),
@@ -344,456 +361,568 @@ VALUES
 (5,'benedettostraquadanio@gmail.com','2023/02/22');
 """
 
-# --- Inizializza i client Boto3 ---
-ec2 = boto3.client('ec2', region_name=REGION)
-rds = boto3.client('rds', region_name=REGION)
-
-def create_ec2_key_pair(key_name):
-    """Crea una nuova key pair EC2 e la salva localmente."""
-    key_file_path = f"{key_name}.pem"
-    if os.path.exists(key_file_path):
-        print(f"La key pair '{key_name}.pem' esiste già localmente.")
-        try:
-            # Verifica se la key pair esiste anche in AWS
-            ec2.describe_key_pairs(KeyNames=[key_name])
-            print(f"La key pair '{key_name}' esiste anche in AWS.")
-            return key_name
-        except ClientError as e:
-            if 'InvalidKeyPair.NotFound' in str(e):
-                print(f"ATTENZIONE: La key pair '{key_name}' non esiste in AWS, ma il file .pem locale sì.")
-                print(f"Elimina il file '{key_file_path}' localmente o scegli un nome diverso per KEY_PAIR_NAME.")
-                raise e # Forzare l'utente a risolvere il conflitto
-            else:
-                raise e
-
-    print(f"Creazione nuova key pair EC2: '{key_name}'...")
+# --- Funzioni di supporto ---
+def get_key_pair(ec2_client, key_name):
     try:
-        key_pair = ec2.create_key_pair(KeyName=key_name)
-        with open(key_file_path, 'w') as f:
-            f.write(key_pair['KeyMaterial'])
-        os.chmod(key_file_path, 0o400) # Imposta permessi restrittivi per la chiave
-        print(f"Key pair '{key_name}.pem' creata e salvata in {key_file_path}")
-        return key_name
+        response = ec2_client.describe_key_pairs(KeyNames=[key_name])
+        print(f"La chiave EC2 '{key_name}' esiste già.")
+        return response['KeyPairs'][0]['KeyName']
     except ClientError as e:
-        if 'KeyPairAlreadyExists' in str(e):
-            print(f"La key pair '{key_name}' esiste già in AWS. Assicurati di avere il file '{key_name}.pem' localmente.")
-            return key_name
+        if "InvalidKeyPair.NotFound" in str(e):
+            print(f"La chiave EC2 '{key_name}' non trovata. Creazione in corso...")
+            key_pair = ec2_client.create_key_pair(KeyName=key_name)
+            with open(f"{key_name}.pem", "w") as f:
+                f.write(key_pair['KeyMaterial'])
+            os.chmod(f"{key_name}.pem", 0o400) # Imposta permessi restrittivi
+            print(f"Chiave '{key_name}.pem' creata.")
+            return key_pair['KeyName']
         else:
-            print(f"Errore durante la creazione della key pair: {e}")
-            raise e
+            raise
 
-def create_security_groups():
-    """Crea i Security Group per EC2 e RDS, gestendo le regole duplicate."""
-    print("Creazione Security Groups...")
-    
-    ec2_sg_id = None
-    rds_sg_id = None
-    vpc_id = ec2.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])['Vpcs'][0]['VpcId']
+def create_vpc_and_security_groups(ec2_client, rds_client):
+    print("Verifica o creazione di VPC e Security Groups...")
+    # Get default VPC
+    vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
+    vpc_id = vpcs['Vpcs'][0]['VpcId']
+    print(f"VPC predefinito trovato: {vpc_id}")
 
-    # --- Security Group per EC2 ---
+    # Create Security Group for RDS
     try:
-        ec2_sg_id = ec2.describe_security_groups(GroupNames=['MusicAppEC2SG'])['SecurityGroups'][0]['GroupId']
-        print("EC2 Security Group 'MusicAppEC2SG' esiste già. Recupero l'ID.")
-    except ClientError as e:
-        if 'InvalidGroup.NotFound' in str(e):
-            ec2_sg_response = ec2.create_security_group(
-                GroupName='MusicAppEC2SG',
-                Description='Security group for Music App EC2 instances (Server and Clients)',
-                VpcId=vpc_id
-            )
-            ec2_sg_id = ec2_sg_response['GroupId']
-            print(f"Creato EC2 Security Group: {ec2_sg_id}")
-
-            # Regole per EC2 Security Group: SSH, traffico app (es. porta 8080)
-            try:
-                ec2.authorize_security_group_ingress(
-                    GroupId=ec2_sg_id,
-                    IpPermissions=[
-                        {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}, # SSH
-                        {'IpProtocol': 'tcp', 'FromPort': 8080, 'ToPort': 8080, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}, # Porta app Java
-                    ]
-                )
-                print("Regole ingresso aggiunte al Security Group EC2.")
-            except ClientError as e_ingress:
-                if 'InvalidPermission.Duplicate' in str(e_ingress):
-                    print("Regola di ingresso SSH/App per EC2 già esistente. Ignoro.")
-                else:
-                    raise e_ingress # Rilancia altri errori
-
-            # Regola outbound all
-            try:
-                ec2.authorize_security_group_egress(
-                    GroupId=ec2_sg_id,
-                    IpPermissions=[{'IpProtocol': '-1', 'FromPort': 0, 'ToPort': 65535, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}]
-                )
-                print("Regola uscita (all traffic) aggiunta al Security Group EC2.")
-            except ClientError as e_egress:
-                if 'InvalidPermission.Duplicate' in str(e_egress):
-                    print("Regola di uscita per EC2 già esistente. Ignoro.")
-                else:
-                    raise e_egress # Rilancia altri errori
-        else:
-            raise e
-
-    # --- Security Group per RDS ---
-    try:
-        rds_sg_id = ec2.describe_security_groups(GroupNames=['MusicAppRDSSG'])['SecurityGroups'][0]['GroupId']
-        print("RDS Security Group 'MusicAppRDSSG' esiste già. Recupero l'ID.")
-    except ClientError as e:
-        if 'InvalidGroup.NotFound' in str(e):
-            rds_sg_response = ec2.create_security_group(
-                GroupName='MusicAppRDSSG',
-                Description='Security group for Music App RDS database',
-                VpcId=vpc_id
-            )
-            rds_sg_id = rds_sg_response['GroupId']
-            print(f"Creato RDS Security Group: {rds_sg_id}")
-
-            # Regola per RDS Security Group: Permetti ingresso da EC2 Security Group E DA OVUNQUE (0.0.0.0/0)
-            try:
-                ec2.authorize_security_group_ingress(
-                    GroupId=rds_sg_id,
-                    IpPermissions=[
-                        # Permetti connessioni dall'EC2 Security Group
-                        {'IpProtocol': 'tcp', 'FromPort': DB_PORT, 'ToPort': DB_PORT, 'UserIdGroupPairs': [{'GroupId': ec2_sg_id}]},
-                        # Permetti connessioni da qualsiasi IP pubblico (0.0.0.0/0) - ATTENZIONE: SICUREZZA!
-                        {'IpProtocol': 'tcp', 'FromPort': DB_PORT, 'ToPort': DB_PORT, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
-                    ]
-                )
-                print("Regole ingresso aggiunte al Security Group RDS (dal SG EC2 e da 0.0.0.0/0).")
-            except ClientError as e_rds_ingress:
-                if 'InvalidPermission.Duplicate' in str(e_rds_ingress):
-                    print("Regola/e di ingresso per RDS già esistente. Ignoro.")
-                else:
-                    raise e_rds_ingress # Rilancia altri errori
-        else:
-            raise e
-            
-    return ec2_sg_id, rds_sg_id
-
-def create_rds_instance(rds_sg_id):
-    """Crea un'istanza RDS PostgreSQL."""
-    print(f"Avvio creazione istanza RDS PostgreSQL: {DB_INSTANCE_IDENTIFIER}...")
-    
-    try:
-        response = rds.create_db_instance(
-            DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER,
-            DBName=DB_NAME,
-            Engine=DB_ENGINE,
-            EngineVersion=DB_ENGINE_VERSION,
-            DBInstanceClass=DB_INSTANCE_CLASS,
-            AllocatedStorage=DB_ALLOCATED_STORAGE,
-            MasterUsername=DB_MASTER_USERNAME,
-            MasterUserPassword=DB_MASTER_PASSWORD,
-            VpcSecurityGroupIds=[rds_sg_id],
-            Port=DB_PORT,
-            PubliclyAccessible=True,
-            Tags=[{'Key': 'Name', 'Value': DB_INSTANCE_IDENTIFIER}]
+        rds_sg_response = ec2_client.create_security_group(
+            GroupName='MusicAppRDSSecurityGroup',
+            Description='Allow PostgreSQL access for MusicApp EC2 instances and local script',
+            VpcId=vpc_id
         )
-        print(f"Richiesta creazione RDS inviata. Attendere che l'istanza sia 'available'...")
-
-        waiter = rds.get_waiter('db_instance_available')
-        waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
-        print("Istanza RDS è 'available'.")
-
-        db_instance = rds.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)['DBInstances'][0]
-        db_endpoint = db_instance['Endpoint']['Address']
-        print(f"Endpoint RDS: {db_endpoint}")
-        return db_endpoint
-
+        rds_security_group_id = rds_sg_response['GroupId']
+        print(f"Security Group RDS creato: {rds_security_group_id}")
     except ClientError as e:
-        if 'DBInstanceAlreadyExists' in str(e):
-            print(f"L'istanza RDS '{DB_INSTANCE_IDENTIFIER}' esiste già. Recupero l'endpoint.")
-            db_instance = rds.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)['DBInstances'][0]
-            if db_instance['DBInstanceStatus'] != 'available':
-                print(f"L'istanza RDS è in stato '{db_instance['DBInstanceStatus']}', attendere che sia 'available'...")
-                waiter = rds.get_waiter('db_instance_available')
-                waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
-                print("Istanza RDS è ora 'available'.")
-            db_endpoint = db_instance['Endpoint']['Address']
-            print(f"Endpoint RDS esistente: {db_endpoint}")
-            return db_endpoint
+        if 'InvalidGroup.Duplicate' in str(e):
+            rds_security_group_id = ec2_client.describe_security_groups(
+                GroupNames=['MusicAppRDSSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+            )['SecurityGroups'][0]['GroupId']
+            print(f"Security Group RDS esistente: {rds_security_group_id}")
         else:
-            raise e
+            raise
 
-def initialize_database(db_endpoint):
-    """Si connette al database RDS e crea lo schema e popola i dati."""
-    print("Inizializzazione database RDS con schema.sql...")
+    # Create Security Group for EC2
+    try:
+        ec2_sg_response = ec2_client.create_security_group(
+            GroupName='MusicAppEC2SecurityGroup',
+            Description='Allow SSH and application traffic to MusicApp EC2 instances',
+            VpcId=vpc_id
+        )
+        ec2_security_group_id = ec2_sg_response['GroupId']
+        print(f"Security Group EC2 creato: {ec2_security_group_id}")
+    except ClientError as e:
+        if 'InvalidGroup.Duplicate' in str(e):
+            ec2_security_group_id = ec2_client.describe_security_groups(
+                GroupNames=['MusicAppEC2SecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+            )['SecurityGroups'][0]['GroupId']
+            print(f"Security Group EC2 esistente: {ec2_security_group_id}")
+        else:
+            raise
+
+    # Authorize ingress for RDS SG (from EC2 SG)
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=rds_security_group_id,
+            IpPermissions=[
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 5432, # PostgreSQL port
+                    'ToPort': 5432,
+                    'UserIdGroupPairs': [{'GroupId': ec2_security_group_id}]
+                }
+            ]
+        )
+        print("Regola di ingresso RDS SG autorizzata per EC2 SG.")
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            print("Regola di ingresso RDS SG già esistente (EC2->RDS).")
+        else:
+            raise
+
+    # NEW: Authorize ingress for RDS SG (from local machine / 0.0.0.0/0 for script init)
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=rds_security_group_id,
+            IpPermissions=[
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 5432, # PostgreSQL port
+                    'ToPort': 5432,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'Allow local script access for DB init (dev only)'}]
+                }
+            ]
+        )
+        print("Regola di ingresso RDS SG autorizzata per 0.0.0.0/0 (necessaria per l'inizializzazione locale).")
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            print("Regola di ingresso RDS SG già esistente (0.0.0.0/0->RDS).")
+        else:
+            raise
+            
+    # Authorize ingress for EC2 SG (SSH from anywhere, App from anywhere)
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=ec2_security_group_id,
+            IpPermissions=[
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 22, # SSH
+                    'ToPort': 22,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                },
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 8080, # Application port
+                    'ToPort': 8080,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                }
+            ]
+        )
+        print("Regole di ingresso EC2 SG autorizzate (SSH, App).")
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            print("Regole di ingresso EC2 SG già esistenti.")
+        else:
+            raise
+
+    return vpc_id, rds_security_group_id, ec2_security_group_id
+
+def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_sg_name):
+    print("Avvio pulizia risorse AWS...")
+
+    # Terminate EC2 instances
+    print("Terminazione istanze EC2...")
+    instances = ec2_client.describe_instances(
+        Filters=[{'Name': 'tag:Application', 'Values': ['MusicApp']}]
+    )
+    instance_ids = []
+    for reservation in instances['Reservations']:
+        for instance in reservation['Instances']:
+            if instance['State']['Name'] != 'terminated':
+                instance_ids.append(instance['InstanceId'])
+    if instance_ids:
+        ec2_client.terminate_instances(InstanceIds=instance_ids)
+        print(f"Istanze EC2 terminate: {instance_ids}. Attesa terminazione...")
+        waiter = ec2_client.get_waiter('instance_terminated')
+        waiter.wait(InstanceIds=instance_ids)
+        print("Istanze EC2 terminate con successo.")
+    else:
+        print("Nessuna istanza EC2 'MusicApp' trovata da terminare.")
+
+    # Delete RDS instance
+    print(f"Eliminazione istanza RDS '{rds_id}'...")
+    try:
+        rds_client.delete_db_instance(
+            DBInstanceIdentifier=rds_id,
+            SkipFinalSnapshot=True # Skip for quick cleanup
+        )
+        print(f"Istanza RDS '{rds_id}' eliminata. Attesa eliminazione...")
+        waiter = rds_client.get_waiter('db_instance_deleted')
+        waiter.wait(DBInstanceIdentifier=rds_id)
+        print(f"Istanza RDS '{rds_id}' eliminata con successo.")
+    except ClientError as e:
+        if "DBInstanceNotFound" in str(e):
+            print(f"Istanza RDS '{rds_id}' non trovata o già eliminata.")
+        else:
+            print(f"Errore durante l'eliminazione dell'istanza RDS: {e}")
+
+    # Delete Security Groups
+    print("Eliminazione Security Groups...")
+    vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
+    vpc_id = vpcs['Vpcs'][0]['VpcId']
+    
+    # Tentativo di eliminare i SG in un ordine che riduca le violazioni di dipendenza
+    sg_to_delete = []
+    try:
+        rds_sg_id = ec2_client.describe_security_groups(
+            GroupNames=[rds_sg_name], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+        )['SecurityGroups'][0]['GroupId']
+        sg_to_delete.append(rds_sg_id)
+    except ClientError as e:
+        if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
+    
+    try:
+        ec2_sg_id = ec2_client.describe_security_groups(
+            GroupNames=[ec2_sg_name], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+        )['SecurityGroups'][0]['GroupId']
+        sg_to_delete.append(ec2_sg_id)
+    except ClientError as e:
+        if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
+
+    # Tentativo di rimuovere prima le regole di ingresso inter-SG
+    for sg_id in sg_to_delete:
+        try:
+            # Revoca tutte le regole di ingresso per il SG
+            sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
+            if 'IpPermissions' in sg_details and sg_details['IpPermissions']:
+                ec2_client.revoke_security_group_ingress(
+                    GroupId=sg_id,
+                    IpPermissions=sg_details['IpPermissions']
+                )
+                print(f"Revocate regole di ingresso per SG {sg_id}.")
+        except ClientError as e:
+            if 'InvalidPermission.NotFound' not in str(e):
+                print(f"Avviso: Impossibile revocare regole di ingresso per {sg_id}: {e}")
+
+    # Ora elimina i SG
+    for sg_name_current in [rds_sg_name, ec2_sg_name]: # Ordine fisso per ridurre dipendenze
+        try:
+            sg_id_current = ec2_client.describe_security_groups(
+                GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+            )['SecurityGroups'][0]['GroupId']
+            ec2_client.delete_security_group(GroupId=sg_id_current)
+            print(f"Security Group '{sg_name_current}' ({sg_id_current}) eliminato.")
+        except ClientError as e:
+            if "InvalidGroup.NotFound" in str(e):
+                print(f"Security Group '{sg_name_current}' non trovato o già eliminato.")
+            elif "DependencyViolation" in str(e):
+                print(f"Errore: Il Security Group '{sg_name_current}' ha ancora dipendenze. Riprovare tra qualche istante o eliminare manualmente.")
+            else:
+                print(f"Errore durante l'eliminazione del Security Group '{sg_name_current}': {e}")
+    
+    # Delete Key Pair
+    print(f"Eliminazione Key Pair '{key_name}'...")
+    try:
+        ec2_client.delete_key_pair(KeyName=key_name)
+        print(f"Key Pair '{key_name}' eliminata da AWS.")
+        if os.path.exists(f"{key_name}.pem"):
+            try:
+                os.remove(f"{key_name}.pem")
+                print(f"File locale '{key_name}.pem' eliminato.")
+            except PermissionError:
+                print(f"AVVISO: Impossibile eliminare il file locale '{key_name}.pem' a causa di un errore di permessi (potrebbe essere in uso). Eliminalo manualmente.")
+            except Exception as file_e:
+                print(f"AVVISO: Errore durante l'eliminazione del file locale '{key_name}.pem': {file_e}")
+    except ClientError as e:
+        if "InvalidKeyPair.NotFound" in str(e):
+            print(f"Key Pair '{key_name}' non trovata o già eliminata in AWS.")
+            if os.path.exists(f"{key_name}.pem"):
+                try:
+                    os.remove(f"{key_name}.pem")
+                    print(f"File locale '{key_name}.pem' eliminato.")
+                except PermissionError:
+                    print(f"AVVISO: Impossibile eliminare il file locale '{key_name}.pem' a causa di un errore di permessi (potrebbe essere in uso). Eliminalo manualmente.")
+                except Exception as file_e:
+                    print(f"AVVISO: Errore durante l'eliminazione del file locale '{key_name}.pem': {file_e}")
+        else:
+            print(f"Errore durante l'eliminazione della Key Pair in AWS: {e}")
+            raise # Re-raise other ClientErrors
+
+    print("Pulizia risorse AWS completata.")
+
+
+def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_sql, data_sql):
+    print(f"\nInizializzazione del database '{db_name}' su {rds_endpoint}...")
+
+    # Connessione al database "postgres" (il database predefinito) per drop/create
+    conn_str_master = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
     conn = None
     try:
-        conn = psycopg2.connect(
-            host=db_endpoint,
-            database=DB_NAME,
-            user=DB_MASTER_USERNAME,
-            password=DB_MASTER_PASSWORD,
-            port=DB_PORT
-        )
-        cur = conn.cursor()
-        
-        # Esegui lo schema
-        cur.execute(SCHEMA_SQL_CONTENT)
-        conn.commit()
-        cur.close()
-        print("Schema database creato con successo.")
-
-        # Esegui i dati forniti
-        print("Popolamento database con dati.sql...")
-        cur = conn.cursor()
-        sql_commands = [cmd.strip() for cmd in DATI_SQL_CONTENT.split(';') if cmd.strip()]
-        for command in sql_commands:
+        # Tentativo di connessione con retry per dare tempo all'RDS di avviarsi
+        for i in range(5):
             try:
-                cur.execute(command)
-                conn.commit()
-            except psycopg2.Error as e:
-                print(f"Errore durante l'esecuzione del comando SQL: {command[:100]}... Errore: {e}")
-                conn.rollback()
-                raise e
+                conn = psycopg2.connect(conn_str_master)
+                conn.autocommit = True # Permette DDL come DROP DATABASE
+                print("Connesso al database 'postgres' per la gestione.")
+                break
+            except psycopg2.OperationalError as e:
+                print(f"Tentativo {i+1} di connessione fallito: {e}. Attesa 10 secondi...")
+                time.sleep(10)
+        if conn is None:
+            raise Exception("Impossibile connettersi al database master PostgreSQL.")
+
+        cur = conn.cursor()
+
+        # 1. Termina tutte le connessioni al database target
+        print(f"Terminazione connessioni attive al database '{db_name}'...")
+        try:
+            cur.execute(f"""
+                SELECT pg_terminate_backend(pg_stat_activity.pid)
+                FROM pg_stat_activity
+                WHERE pg_stat_activity.datname = '{db_name}'
+                  AND pid <> pg_backend_pid();
+            """)
+            print(f"Connessioni terminate per '{db_name}'.")
+        except Exception as e:
+            print(f"Avviso: Errore durante la terminazione delle connessioni (potrebbe non esistere o non avere permessi): {e}")
+
+        # 2. Drop del database esistente (se esiste)
+        print(f"Tentativo di drop del database '{db_name}' (se esiste)...")
+        try:
+            cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
+            print(f"Database '{db_name}' eliminato (o non esisteva).")
+        except Exception as e:
+            print(f"Errore durante il drop del database '{db_name}': {e}")
+            raise # Rilancia l'errore se non si riesce a eliminare il DB
+
+        # 3. Creazione del database
+        print(f"Creazione del database '{db_name}'...")
+        cur.execute(f"CREATE DATABASE {db_name};")
+        print(f"Database '{db_name}' creato.")
 
         cur.close()
-        print("Dati inseriti con successo.")
+        conn.close() # Chiudi la connessione al database master
 
-    except Exception as e:
+        # Connessione al database appena creato per schema e dati
+        conn_str_app = f"dbname={db_name} user={db_username} password={db_password} host={rds_endpoint} port=5432"
+        conn_app = None
+        for i in range(5):
+            try:
+                conn_app = psycopg2.connect(conn_str_app)
+                print(f"Connesso al database '{db_name}' per l'inizializzazione dello schema.")
+                break
+            except psycopg2.OperationalError as e:
+                print(f"Tentativo {i+1} di connessione al DB dell'app fallito: {e}. Attesa 5 secondi...")
+                time.sleep(5)
+        if conn_app is None:
+            raise Exception("Impossibile connettersi al database dell'applicazione.")
+
+        conn_app.autocommit = True # Per eseguire più statement DDL/DML senza commit esplicito
+        cur_app = conn_app.cursor()
+
+        # Esecuzione dello schema
+        print("Esecuzione dello schema.sql...")
+        try:
+            cur_app.execute(schema_sql)
+            print("Schema.sql eseguito con successo.")
+        except Exception as e:
+            print(f"Errore durante l'esecuzione dello schema SQL: {e}")
+            raise
+
+        # Esecuzione dei dati
+        print("Esecuzione dei dati.sql...")
+        try:
+            cur_app.execute(data_sql)
+            print("Dati.sql eseguiti con successo.")
+        except Exception as e:
+            print(f"Errore durante l'esecuzione del comando SQL per i dati: {e}")
+            raise
+
+        cur_app.close()
+        conn_app.close()
+        print(f"Inizializzazione del database '{db_name}' completata con successo.")
+
+    except psycopg2.Error as e:
         print(f"Errore durante l'inizializzazione del database: {e}")
-        print("Assicurati che l'istanza RDS sia completamente disponibile e che le credenziali siano corrette.")
-        print("Potrebbe essere necessario un breve ritardo dopo che l'istanza RDS diventa 'available' prima di potersi connettere.")
+        raise # Rilancia l'errore per fermare lo script principale
+    except Exception as e:
+        print(f"Si è verificato un errore inaspettato durante l'inizializzazione del database: {e}")
         raise
     finally:
         if conn:
             conn.close()
+        if 'conn_app' in locals() and conn_app:
+            conn_app.close()
 
-def create_ec2_instances(ec2_sg_id, key_pair_name):
-    """Crea le istanze EC2 (server e client)."""
-    print("Avvio creazione istanze EC2 (Server e Client)...")
 
-    # User Data script per l'istanza Server
-    server_user_data_script = f"""#!/bin/bash
-sudo apt update -y
-sudo apt install -y openjdk-17-jdk git maven -y
-git clone {GITHUB_REPO_URL}
-cd {REPO_ROOT_DIR}/{SERVER_PROJECT_DIR}
-mvn clean install
-echo "Setup server completato. JARs compilati in target/."
-"""
-    
-    # User Data script per le istanze Client
-    client_user_data_script = f"""#!/bin/bash
-sudo apt update -y
-sudo apt install -y openjdk-17-jdk git maven -y
-git clone {GITHUB_REPO_URL}
-cd {REPO_ROOT_DIR}/{CLIENT_PROJECT_DIR}
-mvn clean install
-echo "Setup client completato. JARs compilati in target/."
-"""
-    
-    instance_ids = []
-    public_ips = {}
+# --- Main deployment logic ---
+def main():
+    if "--clean" in os.sys.argv:
+        ec2 = boto3.client('ec2', region_name=REGION)
+        rds = boto3.client('rds', region_name=REGION)
+        delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
+        return
 
-    # Crea istanza Server
+    ec2_client = boto3.client('ec2', region_name=REGION)
+    rds_client = boto3.client('rds', region_name=REGION)
+
     try:
-        server_instance = ec2.run_instances(
-            ImageId=AMI_ID,
-            MinCount=1,
-            MaxCount=1,
-            InstanceType=INSTANCE_TYPE,
-            KeyName=key_pair_name, # Usa il nome della key pair
-            SecurityGroupIds=[ec2_sg_id],
-            UserData=server_user_data_script,
-            TagSpecifications=[
-                {
-                    'ResourceType': 'instance',
-                    'Tags': [{'Key': 'Name', 'Value': 'MusicAppServer'}]
-                }
-            ]
-        )
-        server_id = server_instance['Instances'][0]['InstanceId']
-        instance_ids.append(server_id)
-        print(f"Istanza Server creata: {server_id}")
+        # 1. Ottieni o crea la Key Pair
+        key_pair_name_actual = get_key_pair(ec2_client, KEY_PAIR_NAME)
 
-        # Crea istanze Client
-        client_instances = ec2.run_instances(
-            ImageId=AMI_ID,
-            MinCount=NUM_CLIENTS,
-            MaxCount=NUM_CLIENTS,
-            InstanceType=INSTANCE_TYPE,
-            KeyName=key_pair_name, # Usa il nome della key pair
-            SecurityGroupIds=[ec2_sg_id],
-            UserData=client_user_data_script,
-            TagSpecifications=[
-                {
-                    'ResourceType': 'instance',
-                    'Tags': [{'Key': 'Name', 'Value': f'MusicAppClient-{i+1}'}]
-                } for i in range(NUM_CLIENTS)
-            ]
-        )
-        for client_instance in client_instances['Instances']:
-            instance_ids.append(client_instance['InstanceId'])
-            print(f"Istanza Client creata: {client_instance['InstanceId']}")
+        # 2. Crea VPC e Security Groups
+        vpc_id, rds_security_group_id, ec2_security_group_id = create_vpc_and_security_groups(ec2_client, rds_client)
 
-        print("Attesa che le istanze EC2 siano 'running'...")
-        waiter = ec2.get_waiter('instance_running')
-        waiter.wait(InstanceIds=instance_ids)
-        print("Tutte le istanze EC2 sono 'running'.")
-
-        # Recupera gli IP pubblici e privati
-        reservations = ec2.describe_instances(InstanceIds=instance_ids)['Reservations']
-        for res in reservations:
-            for instance in res['Instances']:
-                instance_name = [tag['Value'] for tag in instance['Tags'] if tag['Key'] == 'Name'][0]
-                public_ip = instance.get('PublicIpAddress', 'N/A')
-                private_ip = instance.get('PrivateIpAddress', 'N/A')
-                public_ips[instance_name] = {'PublicIp': public_ip, 'PrivateIp': private_ip, 'InstanceId': instance['InstanceId']}
-        
-        return public_ips
-
-    except ClientError as e:
-        print(f"Errore durante la creazione delle istanze EC2: {e}")
-        raise
-
-def clean_up(sg_ids, db_identifier, ec2_ids, key_name):
-    """Funzione per la pulizia delle risorse create."""
-    print("\nInizio processo di pulizia...")
-
-    # Termina istanze EC2
-    if ec2_ids:
-        print(f"Terminazione istanze EC2: {ec2_ids}...")
+        # 3. Deploy RDS Instance
+        print(f"\nTentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'...")
+        rds_endpoint = None
         try:
-            ec2.terminate_instances(InstanceIds=ec2_ids)
-            waiter = ec2.get_waiter('instance_terminated')
-            waiter.wait(InstanceIds=ec2_ids)
-            print("Istanze EC2 terminate.")
+            # Try to describe if it already exists and is available
+            response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
+            instance_status = response['DBInstances'][0]['DBInstanceStatus']
+            rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
+            print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' trovata con stato: {instance_status}.")
+            if instance_status != 'available':
+                print(f"Attesa che l'istanza RDS '{DB_INSTANCE_IDENTIFIER}' diventi 'available'...")
+                waiter = rds_client.get_waiter('db_instance_available')
+                waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
+                response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
+                rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
+                print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' è ora 'available'.")
         except ClientError as e:
-            if 'InvalidInstanceID.NotFound' in str(e):
-                print("Alcune istanze EC2 non trovate, probabilmente già terminate.")
+            if "DBInstanceNotFound" in str(e):
+                print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' non trovata. Creazione in corso...")
+                rds_client.create_db_instance(
+                    DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER,
+                    DBInstanceClass=DB_INSTANCE_CLASS,
+                    Engine=DB_ENGINE,
+                    MasterUsername=DB_MASTER_USERNAME,
+                    MasterUserPassword=DB_MASTER_PASSWORD,
+                    AllocatedStorage=DB_ALLOCATED_STORAGE,
+                    DBName=DB_NAME,
+                    VpcSecurityGroupIds=[rds_security_group_id],
+                    EngineVersion=DB_ENGINE_VERSION,
+                    PubliclyAccessible=True # Per debug e accesso da locale, cambia a False per sicurezza in prod
+                )
+                print(f"Creazione dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}' avviata. Attesa che diventi 'available'...")
+                waiter = rds_client.get_waiter('db_instance_available')
+                waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
+                response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
+                rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
+                print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' è ora 'available'. Endpoint: {rds_endpoint}")
             else:
-                print(f"Errore durante la terminazione delle istanze EC2: {e}")
+                raise
 
-    # Elimina istanza RDS
-    if db_identifier:
-        print(f"Eliminazione istanza RDS: {db_identifier}...")
-        try:
-            rds.delete_db_instance(
-                DBInstanceIdentifier=db_identifier,
-                SkipFinalSnapshot=True, # Non creare snapshot finale per eliminazione rapida
-                DeleteAutomatedBackups=True
+        if not rds_endpoint:
+            raise Exception("Impossibile ottenere l'endpoint RDS.")
+
+        # 4. Inizializza il database con lo schema e i dati
+        print("Inizializzazione database RDS con schema e dati...")
+        initialize_database(
+            rds_endpoint=rds_endpoint,
+            db_username=DB_MASTER_USERNAME,
+            db_password=DB_MASTER_PASSWORD,
+            db_name=DB_NAME,
+            schema_sql=SCHEMA_SQL_CONTENT,
+            data_sql=DATI_SQL_CONTENT
+        )
+
+        # 5. Get User Data Script
+        with open('user_data_script.sh', 'r') as f:
+            user_data_script = f.read()
+
+        # 6. Deploy MusicAppServer EC2 instance (or use existing)
+        server_public_ip = None
+        server_private_ip = None
+        server_instances_found = ec2_client.describe_instances(
+            Filters=[
+                {'Name': 'tag:Name', 'Values': ['MusicAppServer']},
+                {'Name': 'instance-state-name', 'Values': ['pending', 'running']}
+            ]
+        )['Reservations']
+
+        if server_instances_found:
+            server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
+            server_public_ip = server_instances_found[0]['Instances'][0].get('PublicIpAddress')
+            server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
+            print(f"\nIstanza MusicAppServer esistente e running: {server_instance_id}. IP Pubblico: {server_public_ip}, IP Privato: {server_private_ip}")
+        else:
+            print("\nDeploy dell'istanza EC2 'MusicAppServer'...")
+            server_instances = ec2_client.run_instances(
+                ImageId=AMI_ID,
+                InstanceType=INSTANCE_TYPE,
+                MinCount=1,
+                MaxCount=1,
+                KeyName=key_pair_name_actual,
+                SecurityGroupIds=[ec2_security_group_id],
+                UserData=user_data_script,
+                TagSpecifications=[
+                    {
+                        'ResourceType': 'instance',
+                        'Tags': [
+                            {'Key': 'Name', 'Value': 'MusicAppServer'},
+                            {'Key': 'Application', 'Value': 'MusicApp'}
+                        ]
+                    },
+                ]
             )
-            waiter = rds.get_waiter('db_instance_deleted')
-            waiter.wait(DBInstanceIdentifier=db_identifier)
-            print("Istanza RDS eliminata.")
-        except ClientError as e:
-            if 'DBInstanceNotFoundFault' in str(e):
-                print(f"Istanza RDS '{db_identifier}' non trovata, probabilmente già eliminata.")
-            else:
-                print(f"Errore durante l'eliminazione dell'istanza RDS: {e}")
+            server_instance_id = server_instances['Instances'][0]['InstanceId']
+            print(f"Istanza MusicAppServer avviata: {server_instance_id}. Attesa che sia 'running'...")
+            waiter = ec2_client.get_waiter('instance_running')
+            waiter.wait(InstanceIds=[server_instance_id])
+            server_instance_details = ec2_client.describe_instances(InstanceIds=[server_instance_id])
+            server_public_ip = server_instance_details['Reservations'][0]['Instances'][0]['PublicIpAddress']
+            server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+            print(f"MusicAppServer è running. IP Pubblico: {server_public_ip}, IP Privato: {server_private_ip}")
 
-    # Elimina Security Groups
-    for sg_id in sg_ids[::-1]: # Elimina in ordine inverso di creazione per risolvere dipendenze
-        print(f"Eliminazione Security Group: {sg_id}...")
-        try:
-            # Rimuovi eventuali regole di ingresso e uscita che potrebbero causare dipendenze residue
-            # (Questo è un workaround, a volte necessario se ci sono dipendenze implicite)
-            existing_sg_info = ec2.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
-            
-            existing_ingress = existing_sg_info.get('IpPermissions', [])
-            if existing_ingress:
-                ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=existing_ingress)
-            
-            existing_egress = existing_sg_info.get('IpPermissionsEgress', [])
-            if existing_egress:
-                # Per le regole di egress predefinite, bisogna specificare CidrIp come '0.0.0.0/0' e IpProtocol come '-1'
-                # Boto3 a volte richiede di essere molto specifico per revocare le regole di default.
-                default_egress_rule = {'IpProtocol': '-1', 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
-                if default_egress_rule in existing_egress:
-                    ec2.revoke_security_group_egress(GroupId=sg_id, IpPermissions=[default_egress_rule])
-                # Rimuovi altre regole di egress se presenti
-                other_egress_rules = [rule for rule in existing_egress if rule != default_egress_rule]
-                if other_egress_rules:
-                    ec2.revoke_security_group_egress(GroupId=sg_id, IpPermissions=other_egress_rules)
-
-            ec2.delete_security_group(GroupId=sg_id)
-            print(f"Security Group {sg_id} eliminato.")
-        except ClientError as e:
-            if 'DependencyViolation' in str(e):
-                print(f"Impossibile eliminare SG {sg_id}: dipendenze esistenti. Riprova dopo un po'.")
-            elif 'InvalidGroup.NotFound' in str(e):
-                print(f"Security Group {sg_id} non trovato, probabilmente già eliminato.")
-            else:
-                print(f"Errore durante l'eliminazione del Security Group {sg_id}: {e}")
-    
-    # Elimina la Key Pair EC2
-    if key_name:
-        print(f"Eliminazione Key Pair EC2: {key_name}...")
-        try:
-            ec2.delete_key_pair(KeyName=key_name)
-            key_file_path = f"{key_name}.pem"
-            if os.path.exists(key_file_path):
-                os.remove(key_file_path)
-                print(f"File locale '{key_file_path}' eliminato.")
-            print(f"Key Pair '{key_name}' eliminata da AWS.")
-        except ClientError as e:
-            if 'InvalidKeyPair.NotFound' in str(e):
-                print(f"Key Pair '{key_name}' non trovata in AWS, probabilmente già eliminata.")
-            else:
-                print(f"Errore durante l'eliminazione della Key Pair: {e}")
-
-
-# --- Main execution ---
-if __name__ == "__main__":
-    ec2_sg_id = None
-    rds_sg_id = None
-    db_endpoint = None
-    instance_info = {}
-    all_instance_ids = []
-    sg_to_clean = []
-    key_pair_created = False # Flag per tracciare se la key pair è stata creata
-
-    try:
-        # Crea o verifica l'esistenza della key pair
-        create_ec2_key_pair(KEY_PAIR_NAME)
-        key_pair_created = True
-
-        ec2_sg_id, rds_sg_id = create_security_groups()
-        sg_to_clean = [ec2_sg_id, rds_sg_id]
-
-        db_endpoint = create_rds_instance(rds_sg_id)
+        # 7. Deploy MusicAppClient EC2 instances (or use existing)
+        client_public_ips = []
+        client_private_ips = []
         
-        # Attendere un po' per assicurarsi che RDS sia pronto per le connessioni
-        print("Attendere 120 secondi per stabilizzazione connessione RDS...") # Aumento il tempo di attesa
-        time.sleep(120) 
+        client_instances_found = ec2_client.describe_instances(
+            Filters=[
+                {'Name': 'tag:Name', 'Values': ['MusicAppClient']},
+                {'Name': 'instance-state-name', 'Values': ['pending', 'running']}
+            ]
+        )['Reservations']
+        
+        existing_client_ids = []
+        for reservation in client_instances_found:
+            for instance in reservation['Instances']:
+                existing_client_ids.append(instance['InstanceId'])
+                client_public_ips.append(instance.get('PublicIpAddress'))
+                client_private_ips.append(instance.get('PrivateIpAddress'))
 
-        initialize_database(db_endpoint)
+        num_existing_clients = len(existing_client_ids)
+        num_clients_to_create = NUM_CLIENTS - num_existing_clients
 
-        instance_info = create_ec2_instances(ec2_sg_id, KEY_PAIR_NAME)
-        all_instance_ids = [info['InstanceId'] for info in instance_info.values()]
+        if num_existing_clients > 0:
+            print(f"\n{num_existing_clients} istanze MusicAppClient esistenti e running: {existing_client_ids}. IP Pubblici: {client_public_ips[:num_existing_clients]}, IP Privati: {client_private_ips[:num_existing_clients]}")
+        
+        if num_clients_to_create > 0:
+            print(f"\nDeploy di {num_clients_to_create} nuove istanze EC2 'MusicAppClient'...")
+            client_instances_response = ec2_client.run_instances(
+                ImageId=AMI_ID,
+                InstanceType=INSTANCE_TYPE,
+                MinCount=num_clients_to_create,
+                MaxCount=num_clients_to_create,
+                KeyName=key_pair_name_actual,
+                SecurityGroupIds=[ec2_security_group_id],
+                UserData=user_data_script,
+                TagSpecifications=[
+                    {
+                        'ResourceType': 'instance',
+                        'Tags': [
+                            {'Key': 'Name', 'Value': 'MusicAppClient'},
+                            {'Key': 'Application', 'Value': 'MusicApp'}
+                        ]
+                    },
+                ]
+            )
+            new_client_instance_ids = [i['InstanceId'] for i in client_instances_response['Instances']]
+            print(f"Nuove istanze MusicAppClient avviate: {new_client_instance_ids}. Attesa che siano 'running'...")
+            waiter.wait(InstanceIds=new_client_instance_ids)
+            for instance_id in new_client_instance_ids:
+                details = ec2_client.describe_instances(InstanceIds=[instance_id])
+                client_public_ips.append(details['Reservations'][0]['Instances'][0]['PublicIpAddress'])
+                client_private_ips.append(details['Reservations'][0]['Instances'][0]['PrivateIpAddress'])
+            print(f"Nuove MusicAppClients sono running. IP Pubblici aggiunti: {client_public_ips[num_existing_clients:]}, IP Privati aggiunti: {client_private_ips[num_existing_clients:]}")
+        else:
+            print(f"\nNumero di istanze MusicAppClient desiderate ({NUM_CLIENTS}) già raggiunto o superato. Nessuna nuova istanza client avviata.")
 
-        print("\n--- Infrastruttura AWS creata con successo! ---")
-        print("Dettagli del Database RDS:")
-        print(f"  Endpoint: {db_endpoint}:{DB_PORT}")
-        print(f"  Nome DB: {DB_NAME}")
-        print(f"  Utente: {DB_MASTER_USERNAME}")
-        print(f"  Password: {DB_MASTER_PASSWORD}")
-        print(f"  Key Pair EC2 usata: {KEY_PAIR_NAME}.pem (salvata localmente)")
-        print("\nDettagli delle istanze EC2:")
-        for name, info in instance_info.items():
-            print(f"  {name}:")
-            print(f"    ID Istanza: {info['InstanceId']}")
-            print(f"    IP Pubblico: {info['PublicIp']}")
-            print(f"    IP Privato: {info['PrivateIp']}")
-            print(f"    Comando SSH: ssh -i {KEY_PAIR_NAME}.pem ubuntu@{info['PublicIp']}")
+        print("\n--- Deploy Completato ---")
+        print("Dettagli per la connessione:")
+        print(f"Chiave SSH: {key_pair_name_actual}.pem")
+        print(f"Endpoint RDS: {rds_endpoint}")
+        print(f"Utente DB: {DB_MASTER_USERNAME}")
+        print(f"Password DB: {DB_MASTER_PASSWORD}")
+        print(f"Nome DB: {DB_NAME}")
+        print(f"\nIP Pubblico Server EC2: {server_public_ip}")
+        print(f"IP Privato Server EC2 (per client nella stessa VPC): {server_private_ip}")
+        print(f"IP Pubblici Client EC2: {client_public_ips}")
 
-        print("\n--- Passaggi successivi (MANUALI o con script separato) ---")
-        print("1. **Connettiti via SSH** a ciascuna istanza EC2 usando i comandi forniti sopra.")
-        print(f"2. **Naviga nella directory del progetto:** `cd {REPO_ROOT_DIR}/{SERVER_PROJECT_DIR}` (per il server) o `cd {REPO_ROOT_DIR}/{CLIENT_PROJECT_DIR}` (per i client)")
-        print("3. **Modifica i file di configurazione Java** (`src/main/java/music/database/query/app/core/Config.java` o simili):")
-        print("   - **Per l'istanza server:** Aggiorna l'endpoint del database RDS (`DB_URL`), l'utente (`DB_USER`) e la password (`DB_PASSWORD`).")
-        print("   - **Per le istanze client:** Aggiorna l'indirizzo IP del server EC2 (`SERVER_IP`). Utilizza l'**IP Privato** del server per la comunicazione interna tra EC2 se sono nella stessa VPC.")
-        print("     Esempio per il server: `String DB_URL = \"jdbc:postgresql://{db_endpoint}:{db_port}/{db_name}\";`")
-        print("     Esempio per il client: `String SERVER_IP = \"{server_private_ip}\";`")
+        print("\n--- Prossimi Passi (Manuali o Automation Tool) ---")
+        print("1. Connettiti all'istanza 'MusicAppServer' via SSH:")
+        print(f"   `ssh -i {key_pair_name_actual}.pem ec2-user@{server_public_ip}`")
+        print("2. Connettiti alle istanze 'MusicAppClient' via SSH:")
+        for ip in client_public_ips:
+            print(f"   `ssh -i {key_pair_name_actual}.pem ec2-user@{ip}`")
+        print("\n3. **Aggiorna il file `Config.java`** nel repository clonato su ogni istanza EC2:")
+        print("   Dovrai inserire l'endpoint del database RDS e le credenziali, e l'IP privato del server per la comunicazione interna tra EC2 se sono nella stessa VPC.")
+        print(f"     Esempio per il server: `String DB_URL = \"jdbc:postgresql://{rds_endpoint}:5432/{DB_NAME}\";`")
+        print(f"     Esempio per il server (per bind): `String SERVER_IP = \"0.0.0.0\";` (o l'IP privato del server per bind specifico)")
+        print(f"     Esempio per il client: `String SERVER_IP = \"{server_private_ip}\";`") # Client si connette al server
+        print(f"     `String DB_USERNAME = \"{DB_MASTER_USERNAME}\";`")
+        print(f"     `String DB_PASSWORD = \"{DB_MASTER_PASSWORD}\";`")
         print("4. **Ricompila l'applicazione Java** dopo le modifiche (se necessario, altrimenti ignora):")
         print("   `mvn clean install` (questo è già stato fatto dallo UserData, ma potrebbe servire dopo modifiche a `Config.java`)")
         print("5. **Avvia il server Java** (sull'istanza 'MusicAppServer'):")
-        print("   `java -jar target/music-database-query-app-server.jar` (verifica il nome esatto del JAR nella directory 'target')")
+        print("   `java -jar /home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud/server/target/music-database-query-app-server.jar` (verifica il percorso esatto del JAR)")
         print("6. **Avvia i client Java** (sulle istanze 'MusicAppClient-*'):")
-        print("   `java -jar target/music-database-query-app-client.jar` (verifica il nome esatto del JAR nella directory 'target')")
+        print("   `java -jar /home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud/client/target/music-database-query-app-client.jar` (verifica il percorso esatto del JAR)")
         print("\nRicorda di pulire le risorse AWS quando hai finito per evitare costi!")
         print(f"Per pulire: python {os.path.basename(__file__)} --clean")
 
@@ -801,7 +930,6 @@ if __name__ == "__main__":
         print(f"Si è verificato un errore AWS: {e}")
     except Exception as e:
         print(f"Si è verificato un errore inaspettato: {e}")
-    finally:
-        import sys
-        if "--clean" in sys.argv:
-            clean_up(sg_to_clean, DB_INSTANCE_IDENTIFIER, all_instance_ids, KEY_PAIR_NAME if key_pair_created else None)
+
+if __name__ == "__main__":
+    main()
