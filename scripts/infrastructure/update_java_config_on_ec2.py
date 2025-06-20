@@ -85,13 +85,7 @@ def update_java_config_on_ec2(
             print("Building server application...")
             run_remote_command(ssh_client, "mvn clean install", cwd=server_module_path) # Build the entire project
             
-            print("Starting server application...")
-            # Use nohup to keep the process running after SSH disconnects
-            # Run from the server module's target directory
-            run_remote_command(ssh_client, 
-                f"mvn -Pserver exec:java", 
-                cwd=server_module_path)
-            print("Server application started in background.")
+            print("For starting server application go to therminal and run --mvn -Pserver exec:java-- in mvnProject-Server directory")
 
         else: # Client instance
             print("Configuring Client EC2 instance...")
@@ -110,13 +104,7 @@ def update_java_config_on_ec2(
             print("Building client application...")
             run_remote_command(ssh_client, "mvn clean install", cwd=client_module_path) # Build the entire project
 
-            print("Starting client application...")
-            # Use nohup to keep the process running after SSH disconnects
-            # Run from the client module's target directory
-            run_remote_command(ssh_client, 
-                f"mvn -Pclient exec:java", 
-                cwd=client_module_path)
-            print("Client application started in background.")
+            print("For starting client application go to therminal and run --mvn -Pclient exec:java-- in mvnProject-Client directory")
 
     except paramiko.AuthenticationException:
         print(f"Authentication failed, please check your {key_pair_path} and EC2 instance user.")
@@ -136,11 +124,11 @@ if __name__ == "__main__":
     # --- CONFIGURE THESE VARIABLES ---
     # These must be filled with actual values after running deploy_music_app.py
     # and obtaining the outputs.
-    SERVER_EC2_PUBLIC_IP = "54.227.76.231" # E.g., "3.85.123.45"
-    SERVER_EC2_PRIVATE_IP = "3.92.44.74`" # E.g., "172.31.X.X"
+    SERVER_EC2_PUBLIC_IP = "3.83.191.177" # E.g., "3.85.123.45"
+    SERVER_EC2_PRIVATE_IP = "172.31.82.70" # E.g., "172.31.X.X"
 
     # Client EC2 details (pick one if multiple clients are deployed)
-    CLIENT_EC2_PUBLIC_IP = "107.22.129.89" # E.g., "54.166.67.89"
+    CLIENT_EC2_PUBLIC_IP = "44.211.67.168" # E.g., "54.166.67.89"
 
     # Common parameters
     # Ensure this path is correct, e.g., "C:\\Users\\youruser\\.ssh\\my-ec2-key.pem"
