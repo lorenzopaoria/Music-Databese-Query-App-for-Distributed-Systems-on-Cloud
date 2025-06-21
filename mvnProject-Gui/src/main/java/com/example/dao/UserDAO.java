@@ -21,7 +21,7 @@ public class UserDAO {
             stmt.setString(2, password);
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
-                int tipoUtente = rs.getString("tipo");
+                int tipoUtente = rs.getInt("tipo");
                 return tipoUtente == 0 ? "free" : "premium";
             }
             return null;
