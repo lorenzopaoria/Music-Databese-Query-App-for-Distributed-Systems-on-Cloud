@@ -101,19 +101,35 @@ def update_local_java_config(
     server_config_path, server_db_properties_path, client_config_path
 ):
     """Aggiorna i file di configurazione Java e properties localmente."""
-    # Aggiorna DatabaseConfig.java
+
+    # Aggiorna DatabaseConfig.java (solo i valori di default nel blocco catch)
     with open(server_config_path, "r") as f:
         content = f.read()
-    content = re.sub(r'public static final String SERVER_IP = ".*";',
-                     f'public static final String SERVER_IP = "{server_ip}";', content)
-    content = re.sub(r'public static final int SERVER_PORT = .*;',
-                     f'public static final int SERVER_PORT = {server_port};', content)
-    content = re.sub(r'public static final String DATABASE_URL = ".*";',
-                     f'public static final String DATABASE_URL = "jdbc:postgresql://{rds_endpoint}:5432/musicdb";', content)
-    content = re.sub(r'public static final String DB_USERNAME = ".*";',
-                     f'public static final String DB_USERNAME = "{db_username}";', content)
-    content = re.sub(r'public static final String DB_PASSWORD = ".*";',
-                     f'public static final String DB_PASSWORD = "{db_password}";', content)
+    content = re.sub(
+        r'properties\.setProperty\("server\.host",\s*".*?"\);',
+        f'properties.setProperty("server.host", "{server_ip}");',
+        content
+    )
+    content = re.sub(
+        r'properties\.setProperty\("server\.port",\s*".*?"\);',
+        f'properties.setProperty("server.port", "{server_port}");',
+        content
+    )
+    content = re.sub(
+        r'properties\.setProperty\("database\.url",\s*".*?"\);',
+        f'properties.setProperty("database.url", "jdbc:postgresql://{rds_endpoint}:5432/musicdb");',
+        content
+    )
+    content = re.sub(
+        r'properties\.setProperty\("database\.user",\s*".*?"\);',
+        f'properties.setProperty("database.user", "{db_username}");',
+        content
+    )
+    content = re.sub(
+        r'properties\.setProperty\("database\.password",\s*".*?"\);',
+        f'properties.setProperty("database.password", "{db_password}");',
+        content
+    )
     with open(server_config_path, "w") as f:
         f.write(content)
 
@@ -122,24 +138,35 @@ def update_local_java_config(
         lines = f.readlines()
     with open(server_db_properties_path, "w") as f:
         for line in lines:
-            if line.startswith("url="):
-                f.write(f"url=jdbc:postgresql://{rds_endpoint}:5432/musicdb\n")
-            elif line.startswith("username="):
-                f.write(f"username={db_username}\n")
-            elif line.startswith("password="):
-                f.write(f"password={db_password}\n")
+            if line.startswith("server.host="):
+                f.write(f"server.host={server_ip}\n")
+            elif line.startswith("server.port="):
+                f.write(f"server.port={server_port}\n")
+            elif line.startswith("database.url="):
+                f.write(f"database.url=jdbc:postgresql://{rds_endpoint}:5432/musicdb\n")
+            elif line.startswith("database.user="):
+                f.write(f"database.user={db_username}\n")
+            elif line.startswith("database.password="):
+                f.write(f"database.password={db_password}\n")
             else:
                 f.write(line)
 
     # Aggiorna DatabaseClient.java
     with open(client_config_path, "r") as f:
         content = f.read()
-    content = re.sub(r'public static final String SERVER_HOST = ".*";',
-                     f'public static final String SERVER_HOST = "{client_server_ip}";', content)
-    content = re.sub(r'public static final int SERVER_PORT = .*;',
-                     f'public static final int SERVER_PORT = {client_server_port};', content)
+    content = re.sub(
+        r'private static final String SERVER_HOST = ".*?";',
+        f'private static final String SERVER_HOST = "{client_server_ip}";',
+        content
+    )
+    content = re.sub(
+        r'private static final int SERVER_PORT = \d+;',
+        f'private static final int SERVER_PORT = {client_server_port};',
+        content
+    )
     with open(client_config_path, "w") as f:
         f.write(content)
+
     print("Local Java config files updated.")
 
 # ------------------- MAIN DEPLOYMENT LOGIC -------------------
