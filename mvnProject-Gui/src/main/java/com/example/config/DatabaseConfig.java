@@ -14,11 +14,11 @@ public class DatabaseConfig {
             properties.load(fis);
         } catch (IOException e) {
             // per vedere se funziona intanto
-            properties.setProperty("server.host", "127.0.0.1");
-            properties.setProperty("server.port", "12345");
-            properties.setProperty("database.url", "jdbc:mysql://localhost:3306/piattaforma_streaming_musicale");
-            properties.setProperty("database.user", "root");
-            properties.setProperty("database.password", "");
+            properties.setProperty("server.host", "18.207.128.187");
+            properties.setProperty("server.port", "8080");
+            properties.setProperty("database.url", "jdbc:postgresql://music-db-app-rds.cflenc1uoxga.us-east-1.rds.amazonaws.com:5432/musicdb");
+            properties.setProperty("database.user", "dbadmin");
+            properties.setProperty("database.password", "12345678");
         }
     }
 

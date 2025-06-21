@@ -109,7 +109,8 @@ def build_java_project_on_ec2(ec2_public_ip, key_pair_path, is_server_instance):
 def update_local_java_config(
     server_ip, server_port, rds_endpoint, db_username, db_password,
     client_server_ip, client_server_port,
-    server_config_path, server_db_properties_path, client_config_path
+    server_config_path, server_db_properties_path, client_config_path,
+    client_gui_config_path, client_gui_db_properties_path
 ):
     """Aggiorna i file di configurazione Java e properties localmente."""
 
@@ -144,6 +145,37 @@ def update_local_java_config(
     with open(server_config_path, "w") as f:
         f.write(content)
 
+    with open(client_gui_config_path, "r") as f:
+        content = f.read()
+    content = re.sub(
+        r'properties\.setProperty\("server\.host",\s*".*?"\);',
+        f'properties.setProperty("server.host", "{client_server_ip}");',
+        content
+    )
+    content = re.sub(
+        r'properties\.setProperty\("server\.port",\s*".*?"\);',
+        f'properties.setProperty("server.port", "{client_server_port}");',
+        content
+    )
+    content = re.sub(
+        r'properties\.setProperty\("database\.url",\s*".*?"\);',
+        f'properties.setProperty("database.url", "jdbc:postgresql://{rds_endpoint}:5432/musicdb");',
+        content
+    )
+    content = re.sub(
+        r'properties\.setProperty\("database\.user",\s*".*?"\);',
+        f'properties.setProperty("database.user", "{db_username}");',
+        content
+    )   
+    content = re.sub(
+        r'properties\.setProperty\("database\.password",\s*".*?"\);',
+        f'properties.setProperty("database.password", "{db_password}");',
+        content
+    )
+    with open(client_gui_config_path, "w") as f:
+        f.write(content)
+    
+
     # Aggiorna database.properties
     with open(server_db_properties_path, "r") as f:
         lines = f.readlines()
@@ -153,6 +185,24 @@ def update_local_java_config(
                 f.write(f"server.host={server_ip}\n")
             elif line.startswith("server.port="):
                 f.write(f"server.port={server_port}\n")
+            elif line.startswith("database.url="):
+                f.write(f"database.url=jdbc:postgresql://{rds_endpoint}:5432/musicdb\n")
+            elif line.startswith("database.user="):
+                f.write(f"database.user={db_username}\n")
+            elif line.startswith("database.password="):
+                f.write(f"database.password={db_password}\n")
+            else:
+                f.write(line)
+
+    # Aggiorna database.properties per la GUI
+    with open(client_gui_db_properties_path, "r") as f:
+        lines = f.readlines()
+    with open(client_gui_db_properties_path, "w") as f:
+        for line in lines:
+            if line.startswith("server.host="):
+                f.write(f"server.host={client_server_ip}\n")
+            elif line.startswith("server.port="):
+                f.write(f"server.port={client_server_port}\n")
             elif line.startswith("database.url="):
                 f.write(f"database.url=jdbc:postgresql://{rds_endpoint}:5432/musicdb\n")
             elif line.startswith("database.user="):
@@ -206,6 +256,8 @@ def main():
     server_config_path = os.path.join(project_root, "mvnProject-Server", "src", "main", "java", "com", "example", "config", "DatabaseConfig.java")
     server_db_properties_path = os.path.join(project_root, "mvnProject-Server", "src", "main", "java", "com", "example", "config", "database.properties")
     client_config_path = os.path.join(project_root, "mvnProject-Client", "src", "main", "java", "com", "example", "DatabaseClient.java")
+    client_gui_config_path = os.path.join(project_root, "mvnProject-Gui", "src", "main", "java", "com", "example", "config", "DatabaseConfig.java")
+    client_gui_db_properties_path = os.path.join(project_root, "mvnProject-Gui", "src", "main", "java", "com", "example", "config", "database.properties")
 
     # 1. Aggiorna i file di configurazione localmente
     update_local_java_config(
@@ -218,7 +270,9 @@ def main():
         client_server_port=SERVER_APPLICATION_PORT,
         server_config_path=server_config_path,
         server_db_properties_path=server_db_properties_path,
-        client_config_path=client_config_path
+        client_config_path=client_config_path,  # <--- AGGIUNTA VIRGOLA QUI
+        client_gui_config_path=client_gui_config_path,
+        client_gui_db_properties_path=client_gui_db_properties_path
     )
 
     # 2. Commit e push su git
@@ -237,7 +291,7 @@ def main():
     print("Deployment process completed.")
 
     print("Remember to start the server application on the server EC2 instance using: mvn -Pserver exec:java")
-    print("And the client application on the client EC2 instance using: mvn -Pclient exec:java")
+    print("And the client application on the client EC2 instance using: mvn -Pclient exec:java o mvn -Pgui exec:java")
 
 if __name__ == "__main__":
     main()
