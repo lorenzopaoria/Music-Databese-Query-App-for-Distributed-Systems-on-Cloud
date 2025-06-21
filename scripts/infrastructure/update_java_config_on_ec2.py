@@ -89,16 +89,16 @@ def git_pull_on_ec2(ec2_public_ip, key_pair_path, repo_url, repo_dir):
 
 # ------------------- BUILD UTILS -------------------
 
-def build_java_project_on_ec2(ec2_public_ip, key_pair_path, is_server_instance):
-    """Esegue la build Maven del modulo server o client sulla EC2 indicata."""
+def build_java_project_on_ec2(ec2_public_ip, key_pair_path, module):
+    """Esegue la build Maven del modulo specificato sulla EC2 indicata."""
     ssh_client = None
     try:
         ssh_client = ssh_connect(ec2_public_ip, key_pair_path)
         app_repo_root = "/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud"
-        module_path = f"{app_repo_root}/mvnProject-Server" if is_server_instance else f"{app_repo_root}/mvnProject-Client"
-        print(f"Building {'server' if is_server_instance else 'client'} application on {ec2_public_ip}...")
+        module_path = f"{app_repo_root}/{module}"
+        print(f"Building {module} on {ec2_public_ip}...")
         run_remote_command(ssh_client, "mvn clean install", cwd=module_path)
-        print(f"Build completed for {'server' if is_server_instance else 'client'} on {ec2_public_ip}.")
+        print(f"Build completed for {module} on {ec2_public_ip}.")
     finally:
         if ssh_client:
             ssh_client.close()
@@ -285,8 +285,9 @@ def main():
     git_pull_on_ec2(CLIENT_EC2_PUBLIC_IP, KEY_PAIR_PATH, repo_url, repo_dir)
 
     # 4. Build sulle EC2
-    build_java_project_on_ec2(SERVER_EC2_PUBLIC_IP, KEY_PAIR_PATH, is_server_instance=True)
-    build_java_project_on_ec2(CLIENT_EC2_PUBLIC_IP, KEY_PAIR_PATH, is_server_instance=False)
+    build_java_project_on_ec2(SERVER_EC2_PUBLIC_IP, KEY_PAIR_PATH, module="mvnProject-Server")
+    build_java_project_on_ec2(CLIENT_EC2_PUBLIC_IP, KEY_PAIR_PATH, module="mvnProject-Client")
+    build_java_project_on_ec2(CLIENT_EC2_PUBLIC_IP, KEY_PAIR_PATH, module="mvnProject-Gui")
 
     print("Deployment process completed.")
 
