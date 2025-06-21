@@ -921,26 +921,8 @@ def main():
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
         print("\n--- Prossimi Passi (Manuali o Automation Tool) ---")
-        print("1. Connettiti all'istanza 'MusicAppServer' via SSH:")
-        print(f"   `ssh -i {key_pair_name_actual}.pem ec2-user@{server_public_ip}`")
-        print("2. Connettiti alle istanze 'MusicAppClient' via SSH:")
-        for ip in client_public_ips:
-            print(f"   `ssh -i {key_pair_name_actual}.pem ec2-user@{ip}`")
-        print("\n3. **Aggiorna il file `Config.java`** nel repository clonato su ogni istanza EC2:")
-        print("   Dovrai inserire l'endpoint del database RDS e le credenziali, e l'IP privato del server per la comunicazione interna tra EC2 se sono nella stessa VPC.")
-        print(f"     Esempio per il server: `String DB_URL = \"jdbc:postgresql://{rds_endpoint}:5432/{DB_NAME}\";`")
-        print(f"     Esempio per il server (per bind): `String SERVER_IP = \"0.0.0.0\";` (o l'IP privato del server per bind specifico)")
-        print(f"     Esempio per il client: `String SERVER_IP = \"{server_private_ip}\";`") # Client si connette al server
-        print(f"     `String DB_USERNAME = \"{DB_MASTER_USERNAME}\";`")
-        print(f"     `String DB_PASSWORD = \"{DB_MASTER_PASSWORD}\";`")
-        print("4. **Ricompila l'applicazione Java** dopo le modifiche (se necessario, altrimenti ignora):")
-        print("   `mvn clean install` (questo è già stato fatto dallo UserData, ma potrebbe servire dopo modifiche a `Config.java`)")
-        print("5. **Avvia il server Java** (sull'istanza 'MusicAppServer'):")
-        print("   `java -jar /home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud/server/target/music-database-query-app-server.jar` (verifica il percorso esatto del JAR)")
-        print("6. **Avvia i client Java** (sulle istanze 'MusicAppClient-*'):")
-        print("   `java -jar /home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud/client/target/music-database-query-app-client.jar` (verifica il percorso esatto del JAR)")
-        print("\nRicorda di pulire le risorse AWS quando hai finito per evitare costi!")
-        print(f"Per pulire: python {os.path.basename(__file__)} --clean")
+        print("Aggiornare il file config di ssh per connettersi al server e ai client EC2")
+        print("Eseguire update_java_config_on_ec2.py per aggiornare la configurazione Java e clonare su EC2")
 
     except ClientError as e:
         print(f"Si è verificato un errore AWS: {e}")
