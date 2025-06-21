@@ -52,15 +52,22 @@ def ssh_connect(ec2_public_ip, key_pair_path):
 # ------------------- GIT UTILS -------------------
 
 def git_commit_and_push():
-    """Esegue git add, commit e push nella root della repo locale."""
+    """Esegue git add, commit e push nella root della repo locale.
+    Se non ci sono cambiamenti da committare, continua senza errore."""
     # Calcola la root del progetto (due livelli sopra questo script)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
     # Esegui i comandi git nella root del progetto
     subprocess.run(["git", "add", "."], cwd=project_root, check=True)
-    subprocess.run(["git", "commit", "-m", "AutomaticTest"], cwd=project_root, check=True)
-    subprocess.run(["git", "push"], cwd=project_root, check=True)
-    print("Local changes committed and pushed to remote repository.")
+    try:
+        subprocess.run(["git", "commit", "-m", "AutomaticTest"], cwd=project_root, check=True)
+        subprocess.run(["git", "push"], cwd=project_root, check=True)
+        print("Local changes committed and pushed to remote repository.")
+    except subprocess.CalledProcessError as e:
+        if e.returncode == 1:
+            print("No changes to commit. Continuing deployment process.")
+        else:
+            raise
 
 def git_pull_on_ec2(ec2_public_ip, key_pair_path, repo_url, repo_dir):
     """Effettua git pull (o clone se necessario) sulla EC2 indicata."""

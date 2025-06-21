@@ -14,7 +14,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class DatabaseServer {
-    private static final int PORT = 12345;
+    private static final int PORT = 8080;
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());//loggin tramite libreria stampo su terminale
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();//mappa sessioni usata per i thread
     private final Map<String, Role> roles = new HashMap<>();//mappa ruoli disponibili
