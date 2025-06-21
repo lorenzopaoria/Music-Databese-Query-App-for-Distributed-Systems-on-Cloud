@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class DatabaseClient {
-    private static final String SERVER_HOST = "3.80.31.181";
+    private static final String SERVER_HOST = "18.207.128.187";
     private static final int SERVER_PORT = 8080;
 
     private static final List<UserTest> TEST_USERS = new ArrayList<>();//lista di utenti su cui fare test
