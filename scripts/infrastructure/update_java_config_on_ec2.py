@@ -236,5 +236,8 @@ def main():
 
     print("Deployment process completed.")
 
+    print("Remember to start the server application on the server EC2 instance using: mvn -Pserver exec:java")
+    print("And the client application on the client EC2 instance using: mvn -Pclient exec:java")
+
 if __name__ == "__main__":
     main()

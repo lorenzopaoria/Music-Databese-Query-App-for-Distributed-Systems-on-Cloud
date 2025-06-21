@@ -16,13 +16,12 @@ public class UserDAO {
         String query =  "SELECT u.tipo \n" +
                         "FROM Utente u \n" +
                         "WHERE u.email = ? AND u.passw = ?";
-        try (PreparedStatement stmt = connection.prepareStatement(query)) {//preparedstatement per evitare SQL injection
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setString(1, email);
             stmt.setString(2, password);
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
-                int tipoUtente = rs.getInt("tipo");
-                return tipoUtente == 0 ? "free" : "premium";
+                return rs.getString("tipo"); // <-- FIX: leggi come stringa
             }
             return null;
         }
