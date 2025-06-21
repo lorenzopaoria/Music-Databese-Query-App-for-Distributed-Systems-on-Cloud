@@ -8,10 +8,9 @@ from botocore.exceptions import ClientError
 # --- Configurazione AWS ---
 REGION = 'us-east-1'
 KEY_PAIR_NAME = 'my-ec2-key'
-AMI_ID = 'ami-09e6f87a47903347c' # Ensure this AMI ID is valid for your region and architecture (e.g., Amazon Linux 2)
+AMI_ID = 'ami-09e6f87a47903347c'
 INSTANCE_TYPE = 't2.micro'
-NUM_CLIENTS = 2 # Number of client instances
-NUM_SERVERS = 1 # Number of server instances (can be scaled behind ALB)
+NUM_CLIENTS = 2
 
 # --- Configurazione Database RDS (PostgreSQL) ---
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
@@ -381,65 +380,14 @@ def get_key_pair(ec2_client, key_name):
         else:
             raise
 
-def get_public_and_private_subnets(ec2_client, vpc_id):
-    print(f"Ricerca subnet pubbliche e private nel VPC: {vpc_id}...")
-    subnets_response = ec2_client.describe_subnets(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
-    all_subnets = subnets_response['Subnets']
+def create_vpc_and_security_groups(ec2_client, rds_client):
+    print("Verifica o creazione di VPC e Security Groups...")
+    # Get default VPC
+    vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
+    vpc_id = vpcs['Vpcs'][0]['VpcId']
+    print(f"VPC predefinito trovato: {vpc_id}")
 
-    public_subnets = []
-    private_subnets = []
-
-    # Get Internet Gateway for the VPC
-    igw_response = ec2_client.describe_internet_gateways(Filters=[{'Name': 'attachment.vpc-id', 'Values': [vpc_id]}])
-    internet_gateway_ids = [igw['InternetGatewayId'] for igw in igw_response['InternetGateways']]
-
-    for subnet in all_subnets:
-        subnet_id = subnet['SubnetId']
-        # Check if subnet has a route to an Internet Gateway
-        route_tables_response = ec2_client.describe_route_tables(
-            Filters=[
-                {'Name': 'association.subnet-id', 'Values': [subnet_id]}
-            ]
-        )
-        # If no explicit association, it's implicitly associated with the main route table
-        if not route_tables_response['RouteTables']:
-            route_tables_response = ec2_client.describe_route_tables(
-                Filters=[
-                    {'Name': 'vpc-id', 'Values': [vpc_id]},
-                    {'Name': 'association.main', 'Values': ['true']}
-                ]
-            )
-
-        is_public = False
-        for rt in route_tables_response['RouteTables']:
-            for route in rt['Routes']:
-                if route.get('GatewayId') in internet_gateway_ids and route.get('DestinationCidrBlock') == '0.0.0.0/0':
-                    is_public = True
-                    break
-            if is_public:
-                break
-        
-        if is_public:
-            public_subnets.append(subnet_id)
-        else:
-            private_subnets.append(subnet_id)
-
-    if not public_subnets:
-        raise Exception(f"Nessuna subnet pubblica trovata nel VPC {vpc_id}. Assicurati che le tue subnet abbiano una route all'Internet Gateway.")
-    if not private_subnets:
-        print(f"AVVISO: Nessuna subnet privata trovata nel VPC {vpc_id}. Le istanze private saranno lanciate in subnet pubbliche. Questo non è raccomandato per la produzione.")
-        # Fallback to public subnets if no private ones are found, with a warning
-        private_subnets = public_subnets 
-
-    print(f"Subnet Pubbliche: {public_subnets}")
-    print(f"Subnet Private: {private_subnets}")
-    return public_subnets, private_subnets
-
-
-def create_security_groups(ec2_client, vpc_id):
-    print("Verifica o creazione di Security Groups...")
-
-    # Security Group for RDS (accessible from private subnets where servers are)
+    # Create Security Group for RDS
     try:
         rds_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppRDSSecurityGroup',
@@ -457,80 +405,25 @@ def create_security_groups(ec2_client, vpc_id):
         else:
             raise
 
-    # Security Group for Bastion Host (SSH from anywhere)
+    # Create Security Group for EC2
     try:
-        bastion_sg_response = ec2_client.create_security_group(
-            GroupName='MusicAppBastionSecurityGroup',
-            Description='Allow SSH access to Bastion Host from anywhere',
+        ec2_sg_response = ec2_client.create_security_group(
+            GroupName='MusicAppEC2SecurityGroup',
+            Description='Allow SSH and application traffic to MusicApp EC2 instances',
             VpcId=vpc_id
         )
-        bastion_security_group_id = bastion_sg_response['GroupId']
-        print(f"Security Group Bastion creato: {bastion_security_group_id}")
+        ec2_security_group_id = ec2_sg_response['GroupId']
+        print(f"Security Group EC2 creato: {ec2_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
-            bastion_security_group_id = ec2_client.describe_security_groups(
-                GroupNames=['MusicAppBastionSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+            ec2_security_group_id = ec2_client.describe_security_groups(
+                GroupNames=['MusicAppEC2SecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group Bastion esistente: {bastion_security_group_id}")
+            print(f"Security Group EC2 esistente: {ec2_security_group_id}")
         else:
             raise
 
-    # Security Group for Server EC2 instances (SSH from Bastion, App from ALB SG)
-    try:
-        server_sg_response = ec2_client.create_security_group(
-            GroupName='MusicAppServerSecurityGroup',
-            Description='Allow SSH from Bastion, App traffic from ALB',
-            VpcId=vpc_id
-        )
-        server_security_group_id = server_sg_response['GroupId']
-        print(f"Security Group Server creato: {server_security_group_id}")
-    except ClientError as e:
-        if 'InvalidGroup.Duplicate' in str(e):
-            server_security_group_id = ec2_client.describe_security_groups(
-                GroupNames=['MusicAppServerSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
-            )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group Server esistente: {server_security_group_id}")
-        else:
-            raise
-
-    # Security Group for Client EC2 instances (SSH from Bastion)
-    try:
-        client_sg_response = ec2_client.create_security_group(
-            GroupName='MusicAppClientSecurityGroup',
-            Description='Allow SSH from Bastion',
-            VpcId=vpc_id
-        )
-        client_security_group_id = client_sg_response['GroupId']
-        print(f"Security Group Client creato: {client_security_group_id}")
-    except ClientError as e:
-        if 'InvalidGroup.Duplicate' in str(e):
-            client_security_group_id = ec2_client.describe_security_groups(
-                GroupNames=['MusicAppClientSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
-            )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group Client esistente: {client_security_group_id}")
-        else:
-            raise
-
-    # Security Group for ALB (HTTP/S from anywhere, forward to Server SG)
-    try:
-        alb_sg_response = ec2_client.create_security_group(
-            GroupName='MusicAppALBSecurityGroup',
-            Description='Allow HTTP/S traffic to ALB',
-            VpcId=vpc_id
-        )
-        alb_security_group_id = alb_sg_response['GroupId']
-        print(f"Security Group ALB creato: {alb_security_group_id}")
-    except ClientError as e:
-        if 'InvalidGroup.Duplicate' in str(e):
-            alb_security_group_id = ec2_client.describe_security_groups(
-                GroupNames=['MusicAppALBSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
-            )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group ALB esistente: {alb_security_group_id}")
-        else:
-            raise
-
-    # Authorize ingress rules
-    # RDS SG: from Server SG and local script (0.0.0.0/0 for setup, should be restricted later)
+    # Authorize ingress for RDS SG (from EC2 SG)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=rds_security_group_id,
@@ -539,353 +432,83 @@ def create_security_groups(ec2_client, vpc_id):
                     'IpProtocol': 'tcp',
                     'FromPort': 5432, # PostgreSQL port
                     'ToPort': 5432,
-                    'UserIdGroupPairs': [{'GroupId': server_security_group_id}], # From Server instances
-                },
+                    'UserIdGroupPairs': [{'GroupId': ec2_security_group_id}]
+                }
+            ]
+        )
+        print("Regola di ingresso RDS SG autorizzata per EC2 SG.")
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            print("Regola di ingresso RDS SG già esistente (EC2->RDS).")
+        else:
+            raise
+
+    # NEW: Authorize ingress for RDS SG (from local machine / 0.0.0.0/0 for script init)
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=rds_security_group_id,
+            IpPermissions=[
                 {
                     'IpProtocol': 'tcp',
-                    'FromPort': 5432,
+                    'FromPort': 5432, # PostgreSQL port
                     'ToPort': 5432,
                     'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'Allow local script access for DB init (dev only)'}]
                 }
             ]
         )
-        print("Regole di ingresso RDS SG autorizzate.")
+        print("Regola di ingresso RDS SG autorizzata per 0.0.0.0/0 (necessaria per l'inizializzazione locale).")
     except ClientError as e:
         if 'InvalidPermission.Duplicate' in str(e):
-            print("Regole di ingresso RDS SG già esistenti.")
+            print("Regola di ingresso RDS SG già esistente (0.0.0.0/0->RDS).")
         else:
             raise
-    
-    # Bastion SG: SSH from anywhere
+            
+    # Authorize ingress for EC2 SG (SSH from anywhere, App from anywhere)
     try:
         ec2_client.authorize_security_group_ingress(
-            GroupId=bastion_security_group_id,
+            GroupId=ec2_security_group_id,
             IpPermissions=[
                 {
                     'IpProtocol': 'tcp',
                     'FromPort': 22, # SSH
                     'ToPort': 22,
-                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}] # Be careful with this in production! Restrict to your IP.
-                }
-            ]
-        )
-        print("Regole di ingresso Bastion SG autorizzate.")
-    except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("Regole di ingresso Bastion SG già esistenti.")
-        else:
-            raise
-
-    # Server SG: SSH from Bastion SG, App from ALB SG, HTTP from ALB SG
-    try:
-        ec2_client.authorize_security_group_ingress(
-            GroupId=server_security_group_id,
-            IpPermissions=[
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 22, # SSH
-                    'ToPort': 22,
-                    'UserIdGroupPairs': [{'GroupId': bastion_security_group_id}]
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
                 },
                 {
                     'IpProtocol': 'tcp',
                     'FromPort': 8080, # Application port
                     'ToPort': 8080,
-                    'UserIdGroupPairs': [{'GroupId': alb_security_group_id}]
-                }
-            ]
-        )
-        print("Regole di ingresso Server SG autorizzate.")
-    except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("Regole di ingresso Server SG già esistenti.")
-        else:
-            raise
-
-    # Client SG: SSH from Bastion SG
-    try:
-        ec2_client.authorize_security_group_ingress(
-            GroupId=client_security_group_id,
-            IpPermissions=[
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 22, # SSH
-                    'ToPort': 22,
-                    'UserIdGroupPairs': [{'GroupId': bastion_security_group_id}]
-                }
-            ]
-        )
-        print("Regole di ingresso Client SG autorizzate.")
-    except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("Regole di ingresso Client SG già esistenti.")
-        else:
-            raise
-
-    # ALB SG: HTTP from anywhere
-    try:
-        ec2_client.authorize_security_group_ingress(
-            GroupId=alb_security_group_id,
-            IpPermissions=[
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 80, # HTTP
-                    'ToPort': 80,
                     'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
                 }
             ]
         )
-        print("Regole di ingresso ALB SG autorizzate.")
+        print("Regole di ingresso EC2 SG autorizzate (SSH, App).")
     except ClientError as e:
         if 'InvalidPermission.Duplicate' in str(e):
-            print("Regole di ingresso ALB SG già esistenti.")
+            print("Regole di ingresso EC2 SG già esistenti.")
         else:
             raise
 
-    return rds_security_group_id, bastion_security_group_id, server_security_group_id, client_security_group_id, alb_security_group_id
+    return vpc_id, rds_security_group_id, ec2_security_group_id
 
-def create_load_balancer(elbv2_client, ec2_client, vpc_id, public_subnet_ids, server_security_group_id, alb_security_group_id):
-    print("\nCreazione o verifica dell'Application Load Balancer...")
-    alb_arn = None
-    alb_dns_name = None
-
-    try:
-        # Check if ALB already exists
-        response = elbv2_client.describe_load_balancers(Names=['MusicAppALB'])
-        if response['LoadBalancers']:
-            alb = response['LoadBalancers'][0]
-            alb_arn = alb['LoadBalancerArn']
-            alb_dns_name = alb['DNSName']
-            print(f"ALB 'MusicAppALB' esistente: {alb_dns_name}")
-        else:
-            raise ClientError({'Error': {'Code': 'LoadBalancerNotFound'}}, 'DescribeLoadBalancers')
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'LoadBalancerNotFound':
-            print("ALB 'MusicAppALB' non trovato. Creazione in corso...")
-            alb_response = elbv2_client.create_load_balancer(
-                Name='MusicAppALB',
-                Subnets=public_subnet_ids,
-                SecurityGroups=[alb_security_group_id],
-                Scheme='internet-facing',
-                Type='application'
-            )
-            alb_arn = alb_response['LoadBalancers'][0]['LoadBalancerArn']
-            print(f"ALB 'MusicAppALB' creato. Attesa che diventi 'active'...")
-            waiter = elbv2_client.get_waiter('load_balancer_available')
-            waiter.wait(LoadBalancerArns=[alb_arn])
-            
-            # Get DNS name after it's active
-            alb_details = elbv2_client.describe_load_balancers(LoadBalancerArns=[alb_arn])
-            alb_dns_name = alb_details['LoadBalancers'][0]['DNSName']
-            print(f"ALB 'MusicAppALB' è ora 'active'. DNS: {alb_dns_name}")
-        else:
-            raise
-
-    # Create or retrieve Target Group
-    target_group_arn = None
-    try:
-        tg_response = elbv2_client.describe_target_groups(Names=['MusicAppTargetGroup'])
-        if tg_response['TargetGroups']:
-            target_group_arn = tg_response['TargetGroups'][0]['TargetGroupArn']
-            print(f"Target Group 'MusicAppTargetGroup' esistente: {target_group_arn}")
-        else:
-            raise ClientError({'Error': {'Code': 'TargetGroupNotFound'}}, 'DescribeTargetGroups')
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'TargetGroupNotFound':
-            print("Target Group 'MusicAppTargetGroup' non trovato. Creazione in corso...")
-            tg_response = elbv2_client.create_target_group(
-                Name='MusicAppTargetGroup',
-                Protocol='HTTP',
-                Port=8080, # Application port on EC2 instances
-                VpcId=vpc_id,
-                HealthCheckProtocol='HTTP',
-                HealthCheckPort='8080',
-                HealthCheckPath='/', # Basic health check, adjust if your app has a specific health endpoint
-                HealthCheckIntervalSeconds=30,
-                HealthCheckTimeoutSeconds=5,
-                HealthyThresholdCount=2,
-                UnhealthyThresholdCount=2,
-                Matcher={'HttpCode': '200'}
-            )
-            target_group_arn = tg_response['TargetGroups'][0]['TargetGroupArn']
-            print(f"Target Group 'MusicAppTargetGroup' creato: {target_group_arn}")
-        else:
-            raise
-    
-    # Create or retrieve Listener for the ALB
-    listener_arn = None
-    try:
-        listener_response = elbv2_client.describe_listeners(LoadBalancerArn=alb_arn)
-        found_listener = False
-        for listener in listener_response['Listeners']:
-            if listener['Port'] == 80 and listener['Protocol'] == 'HTTP':
-                listener_arn = listener['ListenerArn']
-                print(f"Listener HTTP:80 per ALB '{alb_arn}' esistente: {listener_arn}")
-                found_listener = True
-                break
-        if not found_listener:
-            raise ClientError({'Error': {'Code': 'ListenerNotFound'}}, 'DescribeListeners')
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'ListenerNotFound':
-            print(f"Listener HTTP:80 per ALB '{alb_arn}' non trovato. Creazione in corso...")
-            listener_response = elbv2_client.create_listener(
-                LoadBalancerArn=alb_arn,
-                Protocol='HTTP',
-                Port=80,
-                DefaultActions=[
-                    {
-                        'Type': 'forward',
-                        'TargetGroupArn': target_group_arn
-                    }
-                ]
-            )
-            listener_arn = listener_response['Listeners'][0]['ListenerArn']
-            print(f"Listener HTTP:80 creato per ALB '{alb_arn}': {listener_arn}")
-        else:
-            raise
-
-    return alb_arn, alb_dns_name, target_group_arn
-
-def register_instances_with_target_group(elbv2_client, target_group_arn, instance_ids):
-    print(f"Registrazione istanze {instance_ids} con Target Group {target_group_arn}...")
-    try:
-        # Check already registered instances
-        # Aggiungi un loop di retry per describe_target_health
-        current_registrations = {'TargetHealth': []} # Inizializza per sicurezza
-        max_health_check_retries = 5
-        for attempt in range(max_health_check_retries):
-            try:
-                temp_registrations = elbv2_client.describe_target_health(TargetGroupArn=target_group_arn)
-                if 'TargetHealth' in temp_registrations: # Verifica la presenza della chiave
-                    current_registrations = temp_registrations
-                    break # Se la chiave è presente, esci dal loop
-                else:
-                    print(f"Tentativo {attempt+1}/{max_health_check_retries}: 'TargetHealth' non presente nella risposta. Attesa 10 secondi...")
-                    time.sleep(10)
-            except ClientError as e:
-                # Gestisci errori API transitori qui, se necessario
-                print(f"Tentativo {attempt+1}/{max_health_check_retries}: Errore durante describe_target_health: {e}. Attesa 10 secondi...")
-                time.sleep(10)
-        
-        # Se dopo i retry 'TargetHealth' è ancora assente, solleva un errore o gestisci di conseguenza
-        if not current_registrations['TargetHealth'] and max_health_check_retries > 0:
-             print("Avviso: 'TargetHealth' vuoto o non disponibile dopo diversi tentativi. Potrebbe essere un'istanza appena lanciata.")
-
-
-        registered_instance_ids = [t['Target']['Id'] for t in current_registrations.get('TargetHealth', [])] # Usa .get() con default []
-
-        to_register = []
-        for instance_id in instance_ids:
-            if instance_id not in registered_instance_ids:
-                to_register.append({'Id': instance_id, 'Port': 8080})
-        
-        if to_register:
-            elbv2_client.register_targets(
-                TargetGroupArn=target_group_arn,
-                Targets=to_register
-            )
-            print(f"Istanze {instance_ids} registrate con successo. Attesa che diventino healthy...")
-            # Polling for health check (basic, can be improved)
-            max_attempts = 10
-            for attempt in range(max_attempts):
-                time.sleep(30) # Wait for health checks
-                health_status = elbv2_client.describe_target_health(TargetGroupArn=target_group_arn)
-                all_healthy = True
-                # Aggiungi un controllo per assicurarti che 'TargetHealth' sia presente
-                if 'TargetHealth' not in health_status:
-                    print(f"Avviso: 'TargetHealth' non presente nella risposta describe_target_health al tentativo {attempt+1}. Riprovo...")
-                    all_healthy = False # Considera non healthy se non c'è informazione
-                    continue
-
-                for target_health in health_status['TargetHealth']:
-                    if target_health['Target']['Id'] in instance_ids and target_health['TargetHealth']['State'] != 'healthy':
-                        all_healthy = False
-                        print(f"Istanza {target_health['Target']['Id']} stato: {target_health['TargetHealth']['State']}")
-                        break
-                if all_healthy:
-                    print("Tutte le istanze sono ora healthy nel Target Group.")
-                    break
-                elif attempt == max_attempts - 1:
-                    print("Avviso: Non tutte le istanze sono diventate healthy nel tempo previsto.")
-        else:
-            print("Tutte le istanze sono già registrate con il Target Group.")
-    except ClientError as e:
-        print(f"Errore durante la registrazione delle istanze al Target Group: {e}")
-        raise
-    except Exception as e: # Cattura errori generici che potrebbero non essere ClientError
-        print(f"Si è verificato un errore inaspettato durante la registrazione al Target Group: {e}")
-        raise
-
-def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds_sg_name, bastion_sg_name, server_sg_name, client_sg_name, alb_sg_name, alb_name, tg_name):
+def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_sg_name):
     print("Avvio pulizia risorse AWS...")
 
-    # Deregister instances from Target Groups and delete Target Groups/ALB
-    print("Eliminazione Load Balancer e Target Groups...")
-    try:
-        response = elbv2_client.describe_target_groups(Names=[tg_name])
-        if response['TargetGroups']:
-            tg_arn = response['TargetGroups'][0]['TargetGroupArn']
-            # Deregister any instances first
-            target_health = elbv2_client.describe_target_health(TargetGroupArn=tg_arn)
-            if 'TargetHealth' in target_health and target_health['TargetHealth']: # Aggiunto controllo 'TargetHealth'
-                targets_to_deregister = [{'Id': t['Target']['Id']} for t in target_health['TargetHealth']]
-                elbv2_client.deregister_targets(TargetGroupArn=tg_arn, Targets=targets_to_deregister)
-                print(f"Deregistrazione istanze dal Target Group '{tg_name}'.")
-                time.sleep(5) # Give it a moment to process
-            elbv2_client.delete_target_group(TargetGroupArn=tg_arn)
-            print(f"Target Group '{tg_name}' eliminato.")
-        else:
-            print(f"Target Group '{tg_name}' non trovato o già eliminato.")
-    except ClientError as e:
-        if "TargetGroupNotFoundException" not in str(e):
-            print(f"Errore durante l'eliminazione del Target Group '{tg_name}': {e}")
-        else:
-            print(f"Target Group '{tg_name}' non trovato o già eliminato.")
-
-    try:
-        response = elbv2_client.describe_load_balancers(Names=[alb_name])
-        if response['LoadBalancers']:
-            alb_arn = response['LoadBalancers'][0]['LoadBalancerArn']
-            # Delete listeners first
-            listeners_response = elbv2_client.describe_listeners(LoadBalancerArn=alb_arn)
-            for listener in listeners_response['Listeners']:
-                elbv2_client.delete_listener(ListenerArn=listener['ListenerArn'])
-                print(f"Listener {listener['ListenerArn']} eliminato.")
-            
-            elbv2_client.delete_load_balancer(LoadBalancerArn=alb_arn)
-            print(f"Load Balancer '{alb_name}' eliminato. Attesa eliminazione...")
-            waiter = elbv2_client.get_waiter('load_balancer_not_exists')
-            waiter.wait(LoadBalancerArns=[alb_arn])
-            print(f"Load Balancer '{alb_name}' eliminato con successo.")
-        else:
-            print(f"Load Balancer '{alb_name}' non trovato o già eliminato.")
-    except ClientError as e:
-        if "LoadBalancerNotFoundException" not in str(e):
-            print(f"Errore durante l'eliminazione del Load Balancer '{alb_name}': {e}")
-        else:
-            print(f"Load Balancer '{alb_name}' non trovato o già eliminato.")
-
     # Terminate EC2 instances
-    print("Terminazione istanze EC2 (Bastion, Server, Client)...")
-    instances_to_terminate_tags = [
-        {'Name': 'tag:Name', 'Values': ['MusicAppBastion']},
-        {'Name': 'tag:Name', 'Values': ['MusicAppServer']},
-        {'Name': 'tag:Name', 'Values': ['MusicAppClient']}
-    ]
-    
-    instance_ids_to_terminate = []
-    for tag_filter in instances_to_terminate_tags:
-        instances = ec2_client.describe_instances(Filters=[tag_filter])
-        for reservation in instances['Reservations']:
-            for instance in reservation['Instances']:
-                if instance['State']['Name'] not in ['shutting-down', 'terminated']:
-                    instance_ids_to_terminate.append(instance['InstanceId'])
-    
-    if instance_ids_to_terminate:
-        ec2_client.terminate_instances(InstanceIds=instance_ids_to_terminate)
-        print(f"Istanze EC2 terminate: {instance_ids_to_terminate}. Attesa terminazione...")
+    print("Terminazione istanze EC2...")
+    instances = ec2_client.describe_instances(
+        Filters=[{'Name': 'tag:Application', 'Values': ['MusicApp']}]
+    )
+    instance_ids = []
+    for reservation in instances['Reservations']:
+        for instance in reservation['Instances']:
+            if instance['State']['Name'] != 'terminated':
+                instance_ids.append(instance['InstanceId'])
+    if instance_ids:
+        ec2_client.terminate_instances(InstanceIds=instance_ids)
+        print(f"Istanze EC2 terminate: {instance_ids}. Attesa terminazione...")
         waiter = ec2_client.get_waiter('instance_terminated')
-        waiter.wait(InstanceIds=instance_ids_to_terminate)
+        waiter.wait(InstanceIds=instance_ids)
         print("Istanze EC2 terminate con successo.")
     else:
         print("Nessuna istanza EC2 'MusicApp' trovata da terminare.")
@@ -912,42 +535,45 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     
-    sg_names_to_delete = [
-        alb_sg_name, # ALB SG must be deleted before its dependencies are gone
-        bastion_sg_name,
-        server_sg_name,
-        client_sg_name,
-        rds_sg_name
-    ]
-
-    # Tentativo di eliminare i SG in un ordine che riduce i problemi di dipendenza
-    # Esempio: prima i SG delle istanze, poi l'ALB SG, infine l'RDS SG (che ha dipendenze meno complesse)
-    # È comunque un processo euristico, a volte richiede più tentativi o eliminazione manuale
+    # Tentativo di eliminare i SG in un ordine che riduca le violazioni di dipendenza
+    sg_to_delete = []
+    try:
+        rds_sg_id = ec2_client.describe_security_groups(
+            GroupNames=[rds_sg_name], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+        )['SecurityGroups'][0]['GroupId']
+        sg_to_delete.append(rds_sg_id)
+    except ClientError as e:
+        if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
     
-    # Ordina i SG per tentare di eliminare quelli con più probabilità di non avere dipendenze attive
-    # o quelli che devono essere eliminati prima per sbloccare altri.
-    # Questo è un ordine comune, ma non garantisce l'assenza di DependencyViolation al 100%
-    ordered_sg_names = [client_sg_name, server_sg_name, alb_sg_name, bastion_sg_name, rds_sg_name]
+    try:
+        ec2_sg_id = ec2_client.describe_security_groups(
+            GroupNames=[ec2_sg_name], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+        )['SecurityGroups'][0]['GroupId']
+        sg_to_delete.append(ec2_sg_id)
+    except ClientError as e:
+        if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
 
-    for sg_name_current in ordered_sg_names:
+    # Tentativo di rimuovere prima le regole di ingresso inter-SG
+    for sg_id in sg_to_delete:
+        try:
+            # Revoca tutte le regole di ingresso per il SG
+            sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
+            if 'IpPermissions' in sg_details and sg_details['IpPermissions']:
+                ec2_client.revoke_security_group_ingress(
+                    GroupId=sg_id,
+                    IpPermissions=sg_details['IpPermissions']
+                )
+                print(f"Revocate regole di ingresso per SG {sg_id}.")
+        except ClientError as e:
+            if 'InvalidPermission.NotFound' not in str(e):
+                print(f"Avviso: Impossibile revocare regole di ingresso per {sg_id}: {e}")
+
+    # Ora elimina i SG
+    for sg_name_current in [rds_sg_name, ec2_sg_name]: # Ordine fisso per ridurre dipendenze
         try:
             sg_id_current = ec2_client.describe_security_groups(
                 GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            
-            # Revoke all ingress rules first to avoid DependencyViolation
-            try:
-                sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id_current])['SecurityGroups'][0]
-                if 'IpPermissions' in sg_details and sg_details['IpPermissions']:
-                    ec2_client.revoke_security_group_ingress(
-                        GroupId=sg_id_current,
-                        IpPermissions=sg_details['IpPermissions']
-                    )
-                    print(f"Revocate regole di ingresso per SG {sg_name_current} ({sg_id_current}).")
-            except ClientError as e:
-                if 'InvalidPermission.NotFound' not in str(e):
-                    print(f"Avviso: Impossibile revocare regole di ingresso per {sg_name_current}: {e}")
-
             ec2_client.delete_security_group(GroupId=sg_id_current)
             print(f"Security Group '{sg_name_current}' ({sg_id_current}) eliminato.")
         except ClientError as e:
@@ -1095,40 +721,27 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
 
 # --- Main deployment logic ---
 def main():
+    if "--clean" in os.sys.argv:
+        ec2 = boto3.client('ec2', region_name=REGION)
+        rds = boto3.client('rds', region_name=REGION)
+        delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
+        return
+
     ec2_client = boto3.client('ec2', region_name=REGION)
     rds_client = boto3.client('rds', region_name=REGION)
-    elbv2_client = boto3.client('elbv2', region_name=REGION)
-
-    if "--clean" in os.sys.argv:
-        delete_resources(
-            ec2_client, rds_client, elbv2_client, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 
-            'MusicAppRDSSecurityGroup', 'MusicAppBastionSecurityGroup', 
-            'MusicAppServerSecurityGroup', 'MusicAppClientSecurityGroup', 
-            'MusicAppALBSecurityGroup', 'MusicAppALB', 'MusicAppTargetGroup'
-        )
-        return
 
     try:
         # 1. Ottieni o crea la Key Pair
         key_pair_name_actual = get_key_pair(ec2_client, KEY_PAIR_NAME)
 
-        # Get default VPC and subnets
-        vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
-        vpc_id = vpcs['Vpcs'][0]['VpcId']
-        print(f"VPC predefinito trovato: {vpc_id}")
-        
-        public_subnets, private_subnets = get_public_and_private_subnets(ec2_client, vpc_id)
-        if not private_subnets:
-            raise Exception("Impossibile procedere senza subnet private disponibili per le istanze dell'applicazione.")
-
-        # 2. Crea Security Groups
-        rds_security_group_id, bastion_security_group_id, server_security_group_id, client_security_group_id, alb_security_group_id = \
-            create_security_groups(ec2_client, vpc_id)
+        # 2. Crea VPC e Security Groups
+        vpc_id, rds_security_group_id, ec2_security_group_id = create_vpc_and_security_groups(ec2_client, rds_client)
 
         # 3. Deploy RDS Instance
         print(f"\nTentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'...")
         rds_endpoint = None
         try:
+            # Try to describe if it already exists and is available
             response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
             instance_status = response['DBInstances'][0]['DBInstanceStatus']
             rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
@@ -1153,7 +766,7 @@ def main():
                     DBName=DB_NAME,
                     VpcSecurityGroupIds=[rds_security_group_id],
                     EngineVersion=DB_ENGINE_VERSION,
-                    PubliclyAccessible=True # Set to False in production for RDS. True for local script init
+                    PubliclyAccessible=True # Per debug e accesso da locale, cambia a False per sicurezza in prod
                 )
                 print(f"Creazione dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}' avviata. Attesa che diventi 'available'...")
                 waiter = rds_client.get_waiter('db_instance_available')
@@ -1178,80 +791,13 @@ def main():
             data_sql=DATI_SQL_CONTENT
         )
 
-        # 5. Deploy Bastion Host
-        bastion_public_ip = None
-        bastion_instance_id = None
-        bastion_instances_found = ec2_client.describe_instances(
-            Filters=[
-                {'Name': 'tag:Name', 'Values': ['MusicAppBastion']},
-                {'Name': 'instance-state-name', 'Values': ['pending', 'running']}
-            ]
-        )['Reservations']
-
-        if bastion_instances_found:
-            bastion_instance_id = bastion_instances_found[0]['Instances'][0]['InstanceId']
-            bastion_public_ip = bastion_instances_found[0]['Instances'][0].get('PublicIpAddress')
-            print(f"\nIstanza MusicAppBastion esistente e running: {bastion_instance_id}. IP Pubblico: {bastion_public_ip}")
-        else:
-            print("\nDeploy dell'istanza EC2 'MusicAppBastion'...")
-            # Bastion needs a public IP, so it must be in a public subnet
-            bastion_instances = ec2_client.run_instances(
-                ImageId=AMI_ID,
-                InstanceType=INSTANCE_TYPE,
-                MinCount=1,
-                MaxCount=1,
-                KeyName=key_pair_name_actual,
-                NetworkInterfaces=[{
-                    'DeviceIndex': 0,
-                    'AssociatePublicIpAddress': True,
-                    'Groups': [bastion_security_group_id],
-                    'SubnetId': public_subnets[0] # Use the first public subnet
-                }],
-                TagSpecifications=[
-                    {
-                        'ResourceType': 'instance',
-                        'Tags': [
-                            {'Key': 'Name', 'Value': 'MusicAppBastion'},
-                            {'Key': 'Application', 'Value': 'MusicApp'}
-                        ]
-                    },
-                ]
-            )
-            bastion_instance_id = bastion_instances['Instances'][0]['InstanceId']
-            print(f"Istanza MusicAppBastion avviata: {bastion_instance_id}. Attesa che sia 'running'...")
-            waiter = ec2_client.get_waiter('instance_running')
-            waiter.wait(InstanceIds=[bastion_instance_id])
-            bastion_instance_details = ec2_client.describe_instances(InstanceIds=[bastion_instance_id])
-            bastion_public_ip = bastion_instance_details['Reservations'][0]['Instances'][0]['PublicIpAddress']
-            print(f"MusicAppBastion è running. IP Pubblico: {bastion_public_ip}")
-
-        # 6. Deploy ALB
-        alb_arn, alb_dns_name, target_group_arn = create_load_balancer(elbv2_client, ec2_client, vpc_id, public_subnets, server_security_group_id, alb_security_group_id)
-
-        # 7. Get User Data Script (for server and client)
-        # Assumendo che 'user_data_script.sh' esista e sia nella stessa directory
-        # È fondamentale che questo script installi Java, Maven, e altre dipendenze
-        # per far funzionare correttamente le istanze EC2.
-        user_data_script_path = 'user_data_script.sh'
-        if not os.path.exists(user_data_script_path):
-            print(f"ERRORE: Il file '{user_data_script_path}' non esiste. Si prega di crearlo.")
-            print("Contenuto di esempio per user_data_script.sh:")
-            print("""#!/bin/bash
-yum update -y
-amazon-linux-extras install java-openjdk11 -y
-yum install -y git maven # Install git and maven
-# You might want to clone your repo here for initial setup
-# git clone https://github.com/your/repo.git /home/ec2-user/your-repo
-chown -R ec2-user:ec2-user /home/ec2-user
-""")
-            raise FileNotFoundError(f"Il file {user_data_script_path} è mancante. È essenziale per il setup delle istanze EC2.")
-        
-        with open(user_data_script_path, 'r') as f:
+        # 5. Get User Data Script
+        with open('user_data_script.sh', 'r') as f:
             user_data_script = f.read()
 
-        # 8. Deploy MusicAppServer EC2 instance(s)
-        server_instance_ids = []
-        server_private_ips = []
+        # 6. Deploy MusicAppServer EC2 instance (or use existing)
+        server_public_ip = None
+        server_private_ip = None
         server_instances_found = ec2_client.describe_instances(
             Filters=[
                 {'Name': 'tag:Name', 'Values': ['MusicAppServer']},
@@ -1259,31 +805,20 @@ chown -R ec2-user:ec2-user /home/ec2-user
             ]
         )['Reservations']
 
-        for reservation in server_instances_found:
-            for instance in reservation['Instances']:
-                server_instance_ids.append(instance['InstanceId'])
-                server_private_ips.append(instance.get('PrivateIpAddress'))
-        
-        num_existing_servers = len(server_instance_ids)
-        num_servers_to_create = NUM_SERVERS - num_existing_servers
-
-        if num_existing_servers > 0:
-            print(f"\n{num_existing_servers} istanze MusicAppServer esistenti e running: {server_instance_ids}. IP Privati: {server_private_ips}")
-        
-        if num_servers_to_create > 0:
-            print(f"\nDeploy di {num_servers_to_create} nuove istanze EC2 'MusicAppServer' in subnet private...")
-            server_instances_response = ec2_client.run_instances(
+        if server_instances_found:
+            server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
+            server_public_ip = server_instances_found[0]['Instances'][0].get('PublicIpAddress')
+            server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
+            print(f"\nIstanza MusicAppServer esistente e running: {server_instance_id}. IP Pubblico: {server_public_ip}, IP Privato: {server_private_ip}")
+        else:
+            print("\nDeploy dell'istanza EC2 'MusicAppServer'...")
+            server_instances = ec2_client.run_instances(
                 ImageId=AMI_ID,
                 InstanceType=INSTANCE_TYPE,
-                MinCount=num_servers_to_create,
-                MaxCount=num_servers_to_create,
+                MinCount=1,
+                MaxCount=1,
                 KeyName=key_pair_name_actual,
-                NetworkInterfaces=[{
-                    'DeviceIndex': 0,
-                    'AssociatePublicIpAddress': False, # Servers are in private subnet, no public IP
-                    'Groups': [server_security_group_id],
-                    'SubnetId': private_subnets[0] # Use the first private subnet
-                }],
+                SecurityGroupIds=[ec2_security_group_id],
                 UserData=user_data_script,
                 TagSpecifications=[
                     {
@@ -1295,24 +830,17 @@ chown -R ec2-user:ec2-user /home/ec2-user
                     },
                 ]
             )
-            new_server_instance_ids = [i['InstanceId'] for i in server_instances_response['Instances']]
-            server_instance_ids.extend(new_server_instance_ids) # Add new IDs to the list
-            print(f"Nuove istanze MusicAppServer avviate: {new_server_instance_ids}. Attesa che siano 'running'...")
+            server_instance_id = server_instances['Instances'][0]['InstanceId']
+            print(f"Istanza MusicAppServer avviata: {server_instance_id}. Attesa che sia 'running'...")
             waiter = ec2_client.get_waiter('instance_running')
-            waiter.wait(InstanceIds=new_server_instance_ids)
-            
-            for instance_id in new_server_instance_ids:
-                details = ec2_client.describe_instances(InstanceIds=[instance_id])
-                server_private_ips.append(details['Reservations'][0]['Instances'][0]['PrivateIpAddress'])
-            print(f"Nuovi MusicAppServers sono running. IP Privati aggiunti: {server_private_ips[num_existing_servers:]}")
-        else:
-            print(f"\nNumero di istanze MusicAppServer desiderate ({NUM_SERVERS}) già raggiunto o superato. Nessuna nuova istanza server avviata.")
+            waiter.wait(InstanceIds=[server_instance_id])
+            server_instance_details = ec2_client.describe_instances(InstanceIds=[server_instance_id])
+            server_public_ip = server_instance_details['Reservations'][0]['Instances'][0]['PublicIpAddress']
+            server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+            print(f"MusicAppServer è running. IP Pubblico: {server_public_ip}, IP Privato: {server_private_ip}")
 
-        # Register server instances with Target Group
-        register_instances_with_target_group(elbv2_client, target_group_arn, server_instance_ids)
-
-        # 9. Deploy MusicAppClient EC2 instances
-        client_instance_ids = []
+        # 7. Deploy MusicAppClient EC2 instances (or use existing)
+        client_public_ips = []
         client_private_ips = []
         
         client_instances_found = ec2_client.describe_instances(
@@ -1322,31 +850,28 @@ chown -R ec2-user:ec2-user /home/ec2-user
             ]
         )['Reservations']
         
+        existing_client_ids = []
         for reservation in client_instances_found:
             for instance in reservation['Instances']:
-                client_instance_ids.append(instance['InstanceId'])
+                existing_client_ids.append(instance['InstanceId'])
+                client_public_ips.append(instance.get('PublicIpAddress'))
                 client_private_ips.append(instance.get('PrivateIpAddress'))
 
-        num_existing_clients = len(client_instance_ids)
+        num_existing_clients = len(existing_client_ids)
         num_clients_to_create = NUM_CLIENTS - num_existing_clients
 
         if num_existing_clients > 0:
-            print(f"\n{num_existing_clients} istanze MusicAppClient esistenti e running: {client_instance_ids}. IP Privati: {client_private_ips}")
+            print(f"\n{num_existing_clients} istanze MusicAppClient esistenti e running: {existing_client_ids}. IP Pubblici: {client_public_ips[:num_existing_clients]}, IP Privati: {client_private_ips[:num_existing_clients]}")
         
         if num_clients_to_create > 0:
-            print(f"\nDeploy di {num_clients_to_create} nuove istanze EC2 'MusicAppClient' in subnet private...")
+            print(f"\nDeploy di {num_clients_to_create} nuove istanze EC2 'MusicAppClient'...")
             client_instances_response = ec2_client.run_instances(
                 ImageId=AMI_ID,
                 InstanceType=INSTANCE_TYPE,
                 MinCount=num_clients_to_create,
                 MaxCount=num_clients_to_create,
                 KeyName=key_pair_name_actual,
-                NetworkInterfaces=[{
-                    'DeviceIndex': 0,
-                    'AssociatePublicIpAddress': False, # Clients are in private subnet, no public IP
-                    'Groups': [client_security_group_id],
-                    'SubnetId': private_subnets[0] # Use the first private subnet
-                }],
+                SecurityGroupIds=[ec2_security_group_id],
                 UserData=user_data_script,
                 TagSpecifications=[
                     {
@@ -1359,13 +884,13 @@ chown -R ec2-user:ec2-user /home/ec2-user
                 ]
             )
             new_client_instance_ids = [i['InstanceId'] for i in client_instances_response['Instances']]
-            client_instance_ids.extend(new_client_instance_ids)
             print(f"Nuove istanze MusicAppClient avviate: {new_client_instance_ids}. Attesa che siano 'running'...")
             waiter.wait(InstanceIds=new_client_instance_ids)
             for instance_id in new_client_instance_ids:
                 details = ec2_client.describe_instances(InstanceIds=[instance_id])
+                client_public_ips.append(details['Reservations'][0]['Instances'][0]['PublicIpAddress'])
                 client_private_ips.append(details['Reservations'][0]['Instances'][0]['PrivateIpAddress'])
-            print(f"Nuovi MusicAppClients sono running. IP Privati aggiunti: {client_private_ips[num_existing_clients:]}")
+            print(f"Nuove MusicAppClients sono running. IP Pubblici aggiunti: {client_public_ips[num_existing_clients:]}, IP Privati aggiunti: {client_private_ips[num_existing_clients:]}")
         else:
             print(f"\nNumero di istanze MusicAppClient desiderate ({NUM_CLIENTS}) già raggiunto o superato. Nessuna nuova istanza client avviata.")
 
@@ -1376,31 +901,28 @@ chown -R ec2-user:ec2-user /home/ec2-user
         print(f"Utente DB: {DB_MASTER_USERNAME}")
         print(f"Password DB: {DB_MASTER_PASSWORD}")
         print(f"Nome DB: {DB_NAME}")
-        print(f"\nIP Pubblico Bastion Host: {bastion_public_ip}")
-        print(f"IP Privato Server EC2 (dietro ALB): {server_private_ips}")
-        print(f"IP Privati Client EC2: {client_private_ips}")
-        print(f"DNS Name ALB (per Client): {alb_dns_name}")
+        print(f"\nIP Pubblico Server EC2: {server_public_ip}")
+        print(f"IP Privato Server EC2 (per client nella stessa VPC): {server_private_ip}")
+        print(f"IP Pubblici Client EC2: {client_public_ips}")
 
         # Salva la configurazione in un file JSON
         config = {
-            "bastion_public_ip": bastion_public_ip,
-            "server_private_ips": server_private_ips, # List of private IPs
-            "client_private_ips": client_private_ips, # List of private IPs
-            "alb_dns_name": alb_dns_name,
+            "server_public_ip": server_public_ip,
+            "server_private_ip": server_private_ip,
+            "client_public_ips": client_public_ips,
             "rds_endpoint": rds_endpoint,
             "db_username": DB_MASTER_USERNAME,
             "db_password": DB_MASTER_PASSWORD,
             "db_name": DB_NAME,
-            "key_pair_name": key_pair_name_actual,
-            "server_application_port": 8080 # Add application port for clarity
+            "key_pair_name": key_pair_name_actual
         }
         with open("deploy_config.json", "w") as f:
             json.dump(config, f, indent=4)
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
         print("\n--- Prossimi Passi (Manuali o Automation Tool) ---")
-        print("Aggiornare il file config di ssh per connettersi tramite Bastion Host (o usare paramiko ProxyCommand).")
-        print("Eseguire update_java_config_on_ec2.py per aggiornare la configurazione Java e clonare su EC2.")
+        print("Aggiornare il file config di ssh per connettersi al server e ai client EC2")
+        print("Eseguire update_java_config_on_ec2.py per aggiornare la configurazione Java e clonare su EC2")
 
     except ClientError as e:
         print(f"Si è verificato un errore AWS: {e}")
