@@ -52,10 +52,14 @@ def ssh_connect(ec2_public_ip, key_pair_path):
 # ------------------- GIT UTILS -------------------
 
 def git_commit_and_push():
-    """Esegue git add, commit e push sulla repo locale."""
-    subprocess.run(["git", "add", "."], check=True)
-    subprocess.run(["git", "commit", "-m", "AutomaticTest"], check=True)
-    subprocess.run(["git", "push"], check=True)
+    """Esegue git add, commit e push nella root della repo locale."""
+    # Calcola la root del progetto (due livelli sopra questo script)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+    # Esegui i comandi git nella root del progetto
+    subprocess.run(["git", "add", "."], cwd=project_root, check=True)
+    subprocess.run(["git", "commit", "-m", "AutomaticTest"], cwd=project_root, check=True)
+    subprocess.run(["git", "push"], cwd=project_root, check=True)
     print("Local changes committed and pushed to remote repository.")
 
 def git_pull_on_ec2(ec2_public_ip, key_pair_path, repo_url, repo_dir):
