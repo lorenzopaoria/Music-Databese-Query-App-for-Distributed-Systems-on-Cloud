@@ -1,2 +1,3 @@
-terraform.exe
 Progetto.pem
+.github
+scripts/infrastructure/Progetto.pem

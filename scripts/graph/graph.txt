@@ -1,0 +1,78 @@
+@startuml
+!theme amiga
+
+title Architettura Semplificata App Musicale su AWS
+
+' Disposizione Generale
+skinparam defaultTextAlignment center
+skinparam componentStyle rectangle
+
+actor "Sviluppatore" as local_dev
+
+rectangle "deploy_music_app.py" as deploy_script
+
+cloud "Amazon Web Services (AWS)" as aws {
+
+    folder "Networking\n(VPC, Security Groups)" as network {
+        component "Security Group\n(RDS Access)" as rds_sg
+        component "Security Group\n(EC2 Access)" as ec2_sg
+    }
+
+    database "RDS PostgreSQL DB\n(musicdb)" as rds_db
+
+    rectangle "EC2 Server\n(MusicAppServer)" as ec2_server_container {
+        rectangle "Applicazione Backend" as backend
+    }
+
+    rectangle "EC2 Clients\n(MusicAppClient x2)" as ec2_clients_container {
+        rectangle "Simulazione Client" as clients
+    }
+}
+
+' --- Relazioni e Flussi ---
+
+' Interazione con lo script di deployment
+local_dev -- deploy_script : Esegue e Controlla
+
+' Lo script di deployment gestisce le risorse AWS
+deploy_script --> aws : Crea e Gestisce Risorse AWS
+
+' Inizializzazione del Database da parte dello script
+deploy_script ..> rds_db : Inizializza DB (Schema + Dati)
+
+' Connessioni e regole di sicurezza
+rds_db -- rds_sg : Regola di Accesso
+
+ec2_server_container -- ec2_sg : Regola di Accesso
+ec2_clients_container -- ec2_sg : Regola di Accesso
+
+' Comunicazione tra i componenti dell'applicazione
+ec2_server_container <--> rds_db : Connessione Database\n(JDBC - Porta 5432)
+
+ec2_clients_container --> ec2_server_container : Richieste Applicazione\n(Porta 8080)
+
+' Accesso SSH per amministrazione
+local_dev ..> ec2_server_container : Accesso SSH / Amministrazione (Porta 22)
+local_dev ..> ec2_clients_container : Accesso SSH / Amministrazione (Porta 22)
+
+' --- Note Esplicative ---
+
+note right of rds_sg
+  Permette traffico PostgreSQL (5432)
+  da EC2 Server e temporaneamente da locale.
+end note
+
+note right of ec2_sg
+  Permette traffico SSH (22) e Applicazione (8080)
+  da internet (0.0.0.0/0).
+end note
+
+note bottom of deploy_script
+  Lo script automatizza:
+  - Creazione Key Pair
+  - Configurazione Sicurezza (SG)
+  - Deployment RDS e EC2
+  - Popolamento DB
+  - Output Configurazione
+end note
+@enduml

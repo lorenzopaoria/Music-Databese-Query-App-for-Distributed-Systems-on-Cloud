@@ -1,8 +1,0 @@
-feb 27, 2025 10:05:42 AM com.example.logging.DatabaseAuditLogger logAuthentication
-INFO: [2025-02-27T10:05:42.082127900] Authentication attempt - Client: e100f148, Session: null, User: annapistorio@gmail.com, Tipo Utente: premium, Success: true
-feb 27, 2025 10:06:07 AM com.example.logging.DatabaseAuditLogger logQuery
-INFO: [2025-02-27T10:06:07.176843100] Query execution - Session: 981402e7-005b-49e9-9517-d0ba7dabd8a6, Query: select * from contenuto, Success: true
-feb 27, 2025 10:06:13 AM com.example.logging.DatabaseAuditLogger logQuery
-INFO: [2025-02-27T10:06:13.189149] Query execution - Session: 981402e7-005b-49e9-9517-d0ba7dabd8a6, Query: select * from contenut, Success: false
-feb 27, 2025 10:06:33 AM com.example.logging.DatabaseAuditLogger logQuery
-INFO: [2025-02-27T10:06:33.867554800] Query execution - Session: 981402e7-005b-49e9-9517-d0ba7dabd8a6, Query: drop table contenuto, Success: false

@@ -10,7 +10,7 @@ REGION = 'us-east-1'
 KEY_PAIR_NAME = 'my-ec2-key'
 AMI_ID = 'ami-09e6f87a47903347c'
 INSTANCE_TYPE = 't2.micro'
-NUM_CLIENTS = 2
+NUM_CLIENTS = 0  # Nessun client EC2, solo server EC2
 
 # --- Configurazione Database RDS (PostgreSQL) ---
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
@@ -21,346 +21,6 @@ DB_ALLOCATED_STORAGE = 20 # GB
 DB_MASTER_USERNAME = 'dbadmin' # Aggiornato con il nome utente non riservato
 DB_MASTER_PASSWORD = '12345678' # !!! CAMBIA QUESTA PASSWORD CON UNA ROBUSTA E UNICA !!!
 DB_NAME = 'musicdb' # Nome del database all'interno di PostgreSQL
-
-
-# --- SQL per Schema (Corretto per PostgreSQL con virgolette doppie e tabelle appropriate) ---
-SCHEMA_SQL_CONTENT = """
--- Tabelle principali senza dipendenze immediate o che sono referenziate per prime
-CREATE TABLE IF NOT EXISTS "Tipo_Utente" (
-    "tipo" VARCHAR(50) PRIMARY KEY -- Assumendo 'premium'/'free' come chiave primaria stringa
-);
-
-CREATE TABLE IF NOT EXISTS utente (
-    "email" VARCHAR(255) PRIMARY KEY,
-    "nome" VARCHAR(255) NOT NULL,
-    "cognome" VARCHAR(255) NOT NULL,
-    "passw" VARCHAR(255) NOT NULL,
-    "tipo" VARCHAR(50),
-    "num_telefono" VARCHAR(20),
-    "cf" VARCHAR(16) UNIQUE,
-    FOREIGN KEY ("tipo") REFERENCES "Tipo_Utente"("tipo") ON DELETE SET NULL
-);
-
-CREATE TABLE IF NOT EXISTS Artista ( -- Notare la maiuscola, manterrò per consistenza con i dati forniti
-    "nomeArtista" VARCHAR(255) PRIMARY KEY
-);
-
--- Correzione: La tabella Album che usa nomeArtista e titolo come PK
-CREATE TABLE IF NOT EXISTS Album ( -- Notare la maiuscola, come nei tuoi INSERT
-    "nomeArtista" VARCHAR(255),
-    "titolo" VARCHAR(255),
-    "data_pubblicazione" DATE,
-    "num_tracce" INT,
-    PRIMARY KEY ("nomeArtista", "titolo"), -- Chiave primaria composta
-    FOREIGN KEY ("nomeArtista") REFERENCES Artista("nomeArtista") ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS contenuto (
-    "idContenuto" SERIAL PRIMARY KEY,
-    "nome" VARCHAR(255) NOT NULL,
-    "duarata" INT, -- Assumo 'duarata' sia un refuso per 'durata'
-    "riproduzione" INT,
-    "tipo" INT -- Assumo che questo si riferisca a Tipo_Contenuto, ma non è una FK esplicita nei dati forniti
-);
-
-CREATE TABLE IF NOT EXISTS "Crea_Contenuto" (
-    "idContenuto" INT,
-    "nomeArtista" VARCHAR(255),
-    PRIMARY KEY ("idContenuto", "nomeArtista"),
-    FOREIGN KEY ("idContenuto") REFERENCES contenuto("idContenuto") ON DELETE CASCADE,
-    FOREIGN KEY ("nomeArtista") REFERENCES Artista("nomeArtista") ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS "Tipo_Contenuto" (
-    "idTipoContenuto" SERIAL PRIMARY KEY,
-    "tipo" VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS Genere (
-    "idGenere" SERIAL PRIMARY KEY,
-    "genere" VARCHAR(50) NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS "Preferenza_Genere" (
-    "email" VARCHAR(255),
-    "idGenere" INT,
-    PRIMARY KEY ("email", "idGenere"),
-    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE,
-    FOREIGN KEY ("idGenere") REFERENCES Genere("idGenere") ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS "playlist_utente" (
-    "email" VARCHAR(255),
-    "nomePlaylist" VARCHAR(255),
-    "num_tracce_P" INT,
-    PRIMARY KEY ("email", "nomePlaylist"),
-    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS Abbonamento (
-    "idAbbonamento" SERIAL PRIMARY KEY,
-    "tipo" VARCHAR(50),
-    "email" VARCHAR(255),
-    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE,
-    FOREIGN KEY ("tipo") REFERENCES "Tipo_Utente"("tipo") ON DELETE SET NULL -- SET NULL perché "tipo" può non esistere per l'FK
-);
-
-CREATE TABLE IF NOT EXISTS "contenuti_playlist" (
-    "idContenuto" INT,
-    "nomePlaylist" VARCHAR(255),
-    "email" VARCHAR(255),
-    PRIMARY KEY ("idContenuto", "nomePlaylist", "email"),
-    FOREIGN KEY ("idContenuto") REFERENCES contenuto("idContenuto") ON DELETE CASCADE,
-    FOREIGN KEY ("email", "nomePlaylist") REFERENCES "playlist_utente"("email", "nomePlaylist") ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS "Metodo_Di_Pagamento" (
-    "idMet_Pag" SERIAL PRIMARY KEY,
-    "CVV" INT,
-    "num_carta" BIGINT UNIQUE,
-    "data_scadenza" DATE,
-    "email" VARCHAR(255) UNIQUE,
-    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS pagamento (
-    "idAbbonamento" INT,
-    "data" DATE,
-    "email" VARCHAR(255),
-    PRIMARY KEY ("idAbbonamento", "email", "data"), -- Aggiunto 'data' per unicità se un utente paga più abbonamenti nel tempo
-    FOREIGN KEY ("idAbbonamento") REFERENCES Abbonamento("idAbbonamento") ON DELETE CASCADE,
-    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS "Riproduzione_Contenuto" (
-    "idContenuto" INT,
-    "email" VARCHAR(255),
-    "data" DATE,
-    PRIMARY KEY ("idContenuto", "email", "data"),
-    FOREIGN KEY ("idContenuto") REFERENCES contenuto("idContenuto") ON DELETE CASCADE,
-    FOREIGN KEY ("email") REFERENCES utente("email") ON DELETE CASCADE
-);
-"""
-
-DATI_SQL_CONTENT = """
--- Nota: L'ordine degli INSERT è cruciale. Le tabelle referenziate devono essere popolate per prime.
-
-INSERT INTO "Tipo_Utente"("tipo")
-VALUES
-('premium'),
-('free');
-
-INSERT INTO utente("email", "nome", "cognome", "passw", "tipo", "num_telefono", "cf")
-VALUES
-('margheritaursino@gmail.com', 'margherita', 'ursino', 'marghe02', 'free', '3398423455', 'MRGURSN015H865R'),
-('benedettostraquadanio@gmail.com', 'benedetto', 'straquadanio', 'bene03', 'premium', '3397534691', 'BNDT02S1412H534T'),
-('mariorossi@gmail.com', 'mario', 'rossi', 'rossi04', 'free', '3317212117', 'MRRSSQ86SH152S'),
-('annapistorio@gmail.com', 'anna', 'pistorio', 'anna04', 'premium', '3324621589', 'NPSTRQ99S54H563R'),
-('robertarusso@gmail.com', 'roberta', 'russo', 'russo07', 'free', '3341256355', 'RBRTRS01F34H154S'),
-('federicafirrito@gmail.com', 'federica', 'firrito', 'fede88', 'premium', '3362145711', 'FDRCFR02S10H163S');
-
-INSERT INTO contenuto("nome", "duarata", "riproduzione", "tipo")
-VALUES
-('bello', 215, 0, 0),
-('podcast tranquillo', 1024, 0, 1),
-('another day', 305, 0, 0),
-('francesco totti', 252, 0, 0),
-('la storia dei DBS', 2052, 0, 1),
-('katy', 310, 0, 0),
-('rossana', 213, 0, 0),
-('tonto', 330, 0, 0),
-('muschio', 2215, 0, 1),
-('risica', 206, 0, 0);
-
-INSERT INTO Artista("nomeArtista")
-VALUES
-('joji'),
-('baffo'),
-('another love'),
-('bello figo gu'),
-('alaimo'),
-('perry'),
-('toto'),
-('tha supreme'),
-('selvaggio'),
-('non rosica');
-
-INSERT INTO "Crea_Contenuto"("idContenuto", "nomeArtista")
-VALUES
-(1,'joji'),
-(2,'baffo'),
-(3,'another love'),
-(4,'bello figo gu'),
-(5,'alaimo'),
-(6,'perry'),
-(7,'toto'),
-(8,'tha supreme'),
-(9,'selvaggio'),
-(10,'non rosica');
-
-INSERT INTO "Tipo_Contenuto"("idTipoContenuto", "tipo")
-VALUES
-(1,'brano'),
-(2,'podcast'),
-(3,'brano'),
-(4,'brano'),
-(5,'podcast'),
-(6,'brano'),
-(7,'brano'),
-(8,'brano'),
-(9,'podcast'),
-(10,'brano');
-
-INSERT INTO Genere("idGenere", "genere")
-VALUES
-(1,'classica'),
-(2,'rock'),
-(3,'trap'),
-(4,'rap'),
-(5,'disco'),
-(6,'dance'),
-(7,'punk'),
-(8,'indie'),
-(9,'folk'),
-(10,'folklore');
-
-INSERT INTO "Preferenza_Genere"("email", "idGenere")
-VALUES
-('margheritaursino@gmail.com', 1),
-('benedettostraquadanio@gmail.com', 1),
-('mariorossi@gmail.com', 3),
-('annapistorio@gmail.com', 2),
-('robertarusso@gmail.com', 7),
-('federicafirrito@gmail.com', 5);
-
-INSERT INTO "playlist_utente"("email", "nomePlaylist", "num_tracce_P")
-VALUES
-('benedettostraquadanio@gmail.com', 'tempo libero', 5),
-('annapistorio@gmail.com', 'passatempo', 3),
-('federicafirrito@gmail.com', 'macchina', 5),
-('benedettostraquadanio@gmail.com', 'sonno', 8),
-('annapistorio@gmail.com', 'studio', 7),
-('federicafirrito@gmail.com', 'lavoro', 5),
-('benedettostraquadanio@gmail.com', 'classica', 8),
-('annapistorio@gmail.com', 'amici', 2),
-('federicafirrito@gmail.com', 'giocare', 8),
-('annapistorio@gmail.com', 'lettura', 6),
-('federicafirrito@gmail.com', 'relazionefinita', 9);
-
-INSERT INTO Abbonamento("idAbbonamento", "tipo", "email")
-VALUES
-(1,'premium','benedettostraquadanio@gmail.com'),
-(2,'premium','federicafirrito@gmail.com'),
-(3,'premium','annapistorio@gmail.com');
-
-INSERT INTO Album("nomeArtista", "titolo","data_pubblicazione","num_tracce")
-VALUES
-('alaimo','DBS', '2006/11/15','15'),
-('another love','love','2015/05/22','7'),
-('baffo','baffissimo','2001/04/12','15'),
-('bello figo gu','erroma','2009/11/15','17'),
-('joji','depressione','2008/02/07','4'),
-('non rosica','ride bene','2007/01/11','10'),
-('perry','horse','2019/12/01','21'),
-('perry','dark','2015/05/12','6'),
-('toto','pinuccio','1999/06/07','5'),
-('tha supreme','3s72r0','2020/10/10','17'),
-('joji','nulla','1995/12/12','12'),
-('non rosica','chi ride ultimo','2003/06/12','23'),
-('joji','per niente','2015/05/17','7'),
-('perry','consolation','2009/05/05','6'),
-('baffo','pelle','2000/02/02','6'),
-('another love','distorsione','2022/12/22','7');
-
-INSERT INTO "contenuti_playlist"("idContenuto", "nomePlaylist", "email")
-VALUES
-(1, 'tempo libero','benedettostraquadanio@gmail.com'),
-(1, 'passatempo','annapistorio@gmail.com'),
-(3, 'macchina', 'federicafirrito@gmail.com'),
-(6, 'sonno','benedettostraquadanio@gmail.com'),
-(9, 'studio', 'annapistorio@gmail.com'),
-(7, 'lavoro','federicafirrito@gmail.com'),
-(1, 'classica', 'benedettostraquadanio@gmail.com'),
-(9, 'amici','annapistorio@gmail.com'),
-(8, 'giocare', 'federicafirrito@gmail.com'),
-(10, 'lettura', 'annapistorio@gmail.com'),
-(6, 'relazionefinita', 'federicafirrito@gmail.com'),
-(7, 'tempo libero','benedettostraquadanio@gmail.com'),
-(6, 'tempo libero','benedettostraquadanio@gmail.com'),
-(4, 'tempo libero','benedettostraquadanio@gmail.com'),
-(3, 'tempo libero','benedettostraquadanio@gmail.com'),
-(6, 'passatempo','annapistorio@gmail.com'),
-(7, 'passatempo','annapistorio@gmail.com'),
-(8, 'macchina', 'federicafirrito@gmail.com'),
-(1, 'macchina', 'federicafirrito@gmail.com'),
-(4, 'macchina', 'federicafirrito@gmail.com'),
-(7, 'macchina', 'federicafirrito@gmail.com'),
-(7, 'sonno','benedettostraquadanio@gmail.com'),
-(2, 'sonno','benedettostraquadanio@gmail.com'),
-(1, 'sonno','benedettostraquadanio@gmail.com'),
-(5, 'sonno','benedettostraquadanio@gmail.com'),
-(9, 'sonno','benedettostraquadanio@gmail.com'),
-(10, 'sonno','benedettostraquadanio@gmail.com'),
-(3, 'sonno','benedettostraquadanio@gmail.com'),
-(10, 'studio', 'annapistorio@gmail.com'),
-(6, 'studio', 'annapistorio@gmail.com'),
-(3, 'studio', 'annapistorio@gmail.com'),
-(1, 'studio', 'annapistorio@gmail.com'),
-(2, 'studio', 'annapistorio@gmail.com'),
-(4, 'studio', 'annapistorio@gmail.com'),
-(1, 'lavoro','federicafirrito@gmail.com'),
-(4, 'lavoro','federicafirrito@gmail.com'),
-(8, 'lavoro','federicafirrito@gmail.com'),
-(10, 'lavoro','federicafirrito@gmail.com'),
-(3, 'classica', 'benedettostraquadanio@gmail.com'),
-(8, 'classica', 'benedettostraquadanio@gmail.com'),
-(9, 'classica', 'benedettostraquadanio@gmail.com'),
-(7, 'classica', 'benedettostraquadanio@gmail.com'),
-(4, 'classica', 'benedettostraquadanio@gmail.com'),
-(10, 'classica', 'benedettostraquadanio@gmail.com'),
-(6, 'classica', 'benedettostraquadanio@gmail.com'),
-(10, 'amici','annapistorio@gmail.com'),
-(1, 'giocare', 'federicafirrito@gmail.com'),
-(6, 'giocare', 'federicafirrito@gmail.com'),
-(5, 'giocare', 'federicafirrito@gmail.com'),
-(4, 'giocare', 'federicafirrito@gmail.com'),
-(9, 'giocare', 'federicafirrito@gmail.com'),
-(10, 'giocare', 'federicafirrito@gmail.com'),
-(7, 'giocare', 'federicafirrito@gmail.com'),
-(1, 'lettura', 'annapistorio@gmail.com'),
-(2, 'lettura', 'annapistorio@gmail.com'),
-(4, 'lettura', 'annapistorio@gmail.com'),
-(8, 'lettura', 'annapistorio@gmail.com'),
-(9, 'lettura', 'annapistorio@gmail.com'),
-(4, 'relazionefinita', 'federicafirrito@gmail.com'),
-(7, 'relazionefinita', 'federicafirrito@gmail.com'),
-(8, 'relazionefinita', 'federicafirrito@gmail.com'),
-(9, 'relazionefinita', 'federicafirrito@gmail.com'),
-(3, 'relazionefinita', 'federicafirrito@gmail.com'),
-(2, 'relazionefinita', 'federicafirrito@gmail.com'),
-(1, 'relazionefinita', 'federicafirrito@gmail.com'),
-(10, 'relazionefinita', 'federicafirrito@gmail.com');
-
-INSERT INTO "Metodo_Di_Pagamento"("idMet_Pag", "CVV", "num_carta", "data_scadenza", "email")
-VALUES
-(1,123,123145874125,'2024/12/05','annapistorio@gmail.com'),
-(2,456,156423451539,'2023/11/11','benedettostraquadanio@gmail.com'),
-(3,789,752315249854,'2026/05/15','federicafirrito@gmail.com');
-
-INSERT INTO pagamento("idAbbonamento", "data", "email")
-VALUES
-(1,'2023/02/15','benedettostraquadanio@gmail.com'),
-(2,'2023/02/02','annapistorio@gmail.com'),
-(3,'2023/02/11','federicafirrito@gmail.com');
-
-INSERT INTO "Riproduzione_Contenuto"("idContenuto", "email", "data")
-VALUES
-(1,'benedettostraquadanio@gmail.com','2023/02/22'),
-(4,'annapistorio@gmail.com','2023/02/04'),
-(1,'federicafirrito@gmail.com','2023/02/20'),
-(1,'mariorossi@gmail.com','2023/02/06'),
-(5,'benedettostraquadanio@gmail.com','2023/02/22');
-"""
 
 # --- Funzioni di supporto ---
 def get_key_pair(ec2_client, key_name):
@@ -730,6 +390,20 @@ def main():
     ec2_client = boto3.client('ec2', region_name=REGION)
     rds_client = boto3.client('rds', region_name=REGION)
 
+    # --- LEGGI I FILE SQL ---
+    schema_sql_path = os.path.join(
+        os.path.dirname(__file__),
+        '..', '..', 'Database', 'Sql', 'schema.sql'
+    )
+    dati_sql_path = os.path.join(
+        os.path.dirname(__file__),
+        '..', '..', 'Database', 'Sql', 'dati.sql'
+    )
+    with open(os.path.abspath(schema_sql_path), 'r', encoding='utf-8') as f:
+        schema_sql_content = f.read()
+    with open(os.path.abspath(dati_sql_path), 'r', encoding='utf-8') as f:
+        dati_sql_content = f.read()
+
     try:
         # 1. Ottieni o crea la Key Pair
         key_pair_name_actual = get_key_pair(ec2_client, KEY_PAIR_NAME)
@@ -787,8 +461,8 @@ def main():
             db_username=DB_MASTER_USERNAME,
             db_password=DB_MASTER_PASSWORD,
             db_name=DB_NAME,
-            schema_sql=SCHEMA_SQL_CONTENT,
-            data_sql=DATI_SQL_CONTENT
+            schema_sql=schema_sql_content,
+            data_sql=dati_sql_content
         )
 
         # 5. Get User Data Script
@@ -842,58 +516,7 @@ def main():
         # 7. Deploy MusicAppClient EC2 instances (or use existing)
         client_public_ips = []
         client_private_ips = []
-        
-        client_instances_found = ec2_client.describe_instances(
-            Filters=[
-                {'Name': 'tag:Name', 'Values': ['MusicAppClient']},
-                {'Name': 'instance-state-name', 'Values': ['pending', 'running']}
-            ]
-        )['Reservations']
-        
-        existing_client_ids = []
-        for reservation in client_instances_found:
-            for instance in reservation['Instances']:
-                existing_client_ids.append(instance['InstanceId'])
-                client_public_ips.append(instance.get('PublicIpAddress'))
-                client_private_ips.append(instance.get('PrivateIpAddress'))
-
-        num_existing_clients = len(existing_client_ids)
-        num_clients_to_create = NUM_CLIENTS - num_existing_clients
-
-        if num_existing_clients > 0:
-            print(f"\n{num_existing_clients} istanze MusicAppClient esistenti e running: {existing_client_ids}. IP Pubblici: {client_public_ips[:num_existing_clients]}, IP Privati: {client_private_ips[:num_existing_clients]}")
-        
-        if num_clients_to_create > 0:
-            print(f"\nDeploy di {num_clients_to_create} nuove istanze EC2 'MusicAppClient'...")
-            client_instances_response = ec2_client.run_instances(
-                ImageId=AMI_ID,
-                InstanceType=INSTANCE_TYPE,
-                MinCount=num_clients_to_create,
-                MaxCount=num_clients_to_create,
-                KeyName=key_pair_name_actual,
-                SecurityGroupIds=[ec2_security_group_id],
-                UserData=user_data_script,
-                TagSpecifications=[
-                    {
-                        'ResourceType': 'instance',
-                        'Tags': [
-                            {'Key': 'Name', 'Value': 'MusicAppClient'},
-                            {'Key': 'Application', 'Value': 'MusicApp'}
-                        ]
-                    },
-                ]
-            )
-            new_client_instance_ids = [i['InstanceId'] for i in client_instances_response['Instances']]
-            print(f"Nuove istanze MusicAppClient avviate: {new_client_instance_ids}. Attesa che siano 'running'...")
-            waiter.wait(InstanceIds=new_client_instance_ids)
-            for instance_id in new_client_instance_ids:
-                details = ec2_client.describe_instances(InstanceIds=[instance_id])
-                client_public_ips.append(details['Reservations'][0]['Instances'][0]['PublicIpAddress'])
-                client_private_ips.append(details['Reservations'][0]['Instances'][0]['PrivateIpAddress'])
-            print(f"Nuove MusicAppClients sono running. IP Pubblici aggiunti: {client_public_ips[num_existing_clients:]}, IP Privati aggiunti: {client_private_ips[num_existing_clients:]}")
-        else:
-            print(f"\nNumero di istanze MusicAppClient desiderate ({NUM_CLIENTS}) già raggiunto o superato. Nessuna nuova istanza client avviata.")
-
+        # Nessun deploy client EC2: client sarà in localhost
         print("\n--- Deploy Completato ---")
         print("Dettagli per la connessione:")
         print(f"Chiave SSH: {key_pair_name_actual}.pem")
@@ -903,13 +526,13 @@ def main():
         print(f"Nome DB: {DB_NAME}")
         print(f"\nIP Pubblico Server EC2: {server_public_ip}")
         print(f"IP Privato Server EC2 (per client nella stessa VPC): {server_private_ip}")
-        print(f"IP Pubblici Client EC2: {client_public_ips}")
+        print(f"Client locale: usa l'IP pubblico del server EC2 per connettersi")
 
         # Salva la configurazione in un file JSON
         config = {
             "server_public_ip": server_public_ip,
             "server_private_ip": server_private_ip,
-            "client_public_ips": client_public_ips,
+            "client_public_ips": [],  # Nessun client EC2
             "rds_endpoint": rds_endpoint,
             "db_username": DB_MASTER_USERNAME,
             "db_password": DB_MASTER_PASSWORD,
@@ -920,9 +543,9 @@ def main():
             json.dump(config, f, indent=4)
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
-        print("\n--- Prossimi Passi (Manuali o Automation Tool) ---")
-        print("Aggiornare il file config di ssh per connettersi al server e ai client EC2")
-        print("Eseguire update_java_config_on_ec2.py per aggiornare la configurazione Java e clonare su EC2")
+        print("\n--- Prossimi Passi ---")
+        print("1. Aggiorna la configurazione del client locale per puntare all'IP pubblico del server EC2.")
+        print("2. Avvia il server su EC2 e il client in locale.")
 
     except ClientError as e:
         print(f"Si è verificato un errore AWS: {e}")
