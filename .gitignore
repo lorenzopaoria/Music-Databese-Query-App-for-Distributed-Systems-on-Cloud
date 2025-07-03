@@ -1,3 +1,6 @@
 Progetto.pem
 .github
 scripts/infrastructure/Progetto.pem
+scripts/infrastructure/*.yaml
+scripts/infrastructure/*.txt
+.env
