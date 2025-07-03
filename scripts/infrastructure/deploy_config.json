@@ -1,6 +1,6 @@
 {
-    "server_public_ip": "34.228.53.128",
-    "server_private_ip": "172.31.19.244",
+    "server_public_ip": "13.218.236.184",
+    "server_private_ip": "172.31.16.24",
     "client_public_ips": [],
     "rds_endpoint": "music-db-app-rds.cflenc1uoxga.us-east-1.rds.amazonaws.com",
     "db_username": "dbadmin",

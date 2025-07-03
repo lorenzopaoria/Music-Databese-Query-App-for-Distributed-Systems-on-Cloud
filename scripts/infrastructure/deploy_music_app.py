@@ -15,12 +15,12 @@ NUM_CLIENTS = 0  # Nessun client EC2, solo server EC2
 # --- Configurazione Database RDS (PostgreSQL) ---
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
 DB_ENGINE = 'postgres'
-DB_ENGINE_VERSION = '17.4' # Assicurati che questa versione sia supportata da RDS nella tua regione
-DB_INSTANCE_CLASS = 'db.t3.micro' # Tipo di istanza RDS
-DB_ALLOCATED_STORAGE = 20 # GB
-DB_MASTER_USERNAME = 'dbadmin' # Aggiornato con il nome utente non riservato
-DB_MASTER_PASSWORD = '12345678' # !!! CAMBIA QUESTA PASSWORD CON UNA ROBUSTA E UNICA !!!
-DB_NAME = 'musicdb' # Nome del database all'interno di PostgreSQL
+DB_ENGINE_VERSION = '17.4' 
+DB_INSTANCE_CLASS = 'db.t3.micro'
+DB_ALLOCATED_STORAGE = 20 
+DB_MASTER_USERNAME = 'dbadmin' 
+DB_MASTER_PASSWORD = '12345678' 
+DB_NAME = 'musicdb'
 
 # --- Funzioni di supporto ---
 def get_key_pair(ec2_client, key_name):
@@ -34,7 +34,7 @@ def get_key_pair(ec2_client, key_name):
             key_pair = ec2_client.create_key_pair(KeyName=key_name)
             with open(f"{key_name}.pem", "w") as f:
                 f.write(key_pair['KeyMaterial'])
-            os.chmod(f"{key_name}.pem", 0o400) # Imposta permessi restrittivi
+            os.chmod(f"{key_name}.pem", 0o400)
             print(f"Chiave '{key_name}.pem' creata.")
             return key_pair['KeyName']
         else:
@@ -103,7 +103,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # NEW: Authorize ingress for RDS SG (from local machine / 0.0.0.0/0 for script init)
+    # Authorize ingress for RDS SG from local machine
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=rds_security_group_id,
@@ -123,7 +123,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
             
-    # Authorize ingress for EC2 SG (SSH from anywhere, App from anywhere)
+    # Authorize ingress for EC2
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=ec2_security_group_id,
@@ -178,7 +178,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     try:
         rds_client.delete_db_instance(
             DBInstanceIdentifier=rds_id,
-            SkipFinalSnapshot=True # Skip for quick cleanup
+            SkipFinalSnapshot=True
         )
         print(f"Istanza RDS '{rds_id}' eliminata. Attesa eliminazione...")
         waiter = rds_client.get_waiter('db_instance_deleted')
@@ -270,7 +270,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
                     print(f"AVVISO: Errore durante l'eliminazione del file locale '{key_name}.pem': {file_e}")
         else:
             print(f"Errore durante l'eliminazione della Key Pair in AWS: {e}")
-            raise # Re-raise other ClientErrors
+            raise
 
     print("Pulizia risorse AWS completata.")
 
@@ -304,7 +304,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
                 SELECT pg_terminate_backend(pg_stat_activity.pid)
                 FROM pg_stat_activity
                 WHERE pg_stat_activity.datname = '{db_name}'
-                  AND pid <> pg_backend_pid();
+                    AND pid <> pg_backend_pid();
             """)
             print(f"Connessioni terminate per '{db_name}'.")
         except Exception as e:
@@ -544,8 +544,10 @@ def main():
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
         print("\n--- Prossimi Passi ---")
-        print("1. Aggiorna la configurazione del client locale per puntare all'IP pubblico del server EC2.")
-        print("2. Avvia il server su EC2 e il client in locale.")
+        print("1. Esegui il file encrypt_secrets.py per aggiornare le credenziali per git actions.")
+        print("2. Esegui il file update_java_config.py per aggiornare le configurazioni Java.")
+        print("3. Connettiti al server EC2 con: ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
+        print("4. Se si esegue una push su GitHub, allora le git actions eseguiranno automaticamente la pull e il deploy dell'applicazione.")
 
     except ClientError as e:
         print(f"Si è verificato un errore AWS: {e}")

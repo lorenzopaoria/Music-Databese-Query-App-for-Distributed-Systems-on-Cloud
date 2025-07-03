@@ -6,3 +6,5 @@ scripts/infrastructure/*.txt
 scripts/infrastructure/*.lnk
 mvnProject
 .env
+credentials.*
+scripts/infrastructure/manual
