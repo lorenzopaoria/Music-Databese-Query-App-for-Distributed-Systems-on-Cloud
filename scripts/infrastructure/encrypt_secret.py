@@ -4,8 +4,8 @@ import requests
 from nacl import encoding, public
 from dotenv import load_dotenv
 
-# Carica variabili da .env
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
+# Carica variabili da .env nella root del progetto
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO = os.getenv("REPO")
@@ -41,7 +41,11 @@ def encrypt(public_key: str, secret_value: str) -> str:
     encrypted = sealed_box.encrypt(secret_value.encode("utf-8"))
     return base64.b64encode(encrypted).decode("utf-8")
 
+print("Valore del secret in chiaro (NEW_IP):", NEW_IP)
+
 encrypted_value = encrypt(public_key, NEW_IP)
+
+print("Valore cifrato che verrà inviato a GitHub:", encrypted_value)
 
 # 3. Aggiorna il secret
 payload = {
