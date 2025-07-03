@@ -3,4 +3,5 @@ Progetto.pem
 scripts/infrastructure/Progetto.pem
 scripts/infrastructure/*.yaml
 scripts/infrastructure/*.txt
+scripts/infrastructure/*.lnk
 .env
