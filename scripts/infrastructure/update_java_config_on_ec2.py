@@ -140,7 +140,6 @@ def update_local_java_config(
     )
     with open(client_config_path, "w") as f:
         f.write(content)
-
     print("Local Java config files updated.")
 
 # ------------------- MAIN DEPLOYMENT LOGIC -------------------
