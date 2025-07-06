@@ -1,14 +1,14 @@
 version: 0.0
 os: linux
 files:
-  - source: mvnProject-Server/target/
-    destination: /home/ec2-user/musicapp/
+  - source: / # La root dell'artifact CodeBuild contiene ora tutti i file necessari
+    destination: /home/ec2-user/musicapp/ # Copia tutto l'artifact in questa destinazione
 hooks:
   BeforeInstall:
-    - location: scripts/infrastructure/before_install.sh
+    - location: scripts/infrastructure/before_install.sh # Assicurati che questo script esista e crei la directory
       timeout: 30
       runas: ec2-user
   AfterInstall:
-    - location: scripts/infrastructure/restart_server.sh
-      timeout: 60
+    - location: scripts/infrastructure/restart_docker_server.sh # Chiama il nuovo script Docker
+      timeout: 300 # Aumenta il timeout se la pull dell'immagine richiede tempo
       runas: ec2-user

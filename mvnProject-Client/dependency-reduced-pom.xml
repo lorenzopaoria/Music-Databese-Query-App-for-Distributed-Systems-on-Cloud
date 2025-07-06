@@ -50,6 +50,9 @@
                   <artifact>*:*</artifact>
                   <excludes>
                     <exclude>META-INF/MANIFEST.MF</exclude>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
                   </excludes>
                 </filter>
               </filters>
@@ -59,7 +62,7 @@
                 </transformer>
                 <transformer />
                 <transformer>
-                  <resource>META-INF/services/*</resource>
+                  <resource>META-INF/services/java.sql.Driver</resource>
                 </transformer>
               </transformers>
             </configuration>
@@ -92,7 +95,7 @@
       </build>
       <properties>
         <jdbc.username>root</jdbc.username>
-        <jdbc.url>jdbc:mysql://localhost:3306/piattaforma_streaming_musicale</jdbc.url>
+        <jdbc.url>jdbc:postgresql://localhost:5432/musicdb</jdbc.url>
       </properties>
     </profile>
     <profile>
@@ -118,7 +121,7 @@
       </build>
       <properties>
         <jdbc.username>root</jdbc.username>
-        <jdbc.url>jdbc:mysql://localhost:3306/piattaforma_streaming_musicale</jdbc.url>
+        <jdbc.url>jdbc:postgresql://localhost:5432/musicdb</jdbc.url>
       </properties>
     </profile>
     <profile>
@@ -149,6 +152,7 @@
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
     <slf4j.version>1.7.36</slf4j.version>
+    <postgresql.version>42.7.3</postgresql.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <logback.version>1.2.11</logback.version>
   </properties>
