@@ -716,11 +716,6 @@ def main():
             json.dump(config, f, indent=4)
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
-        print("\n--- Prossimi Passi ---")
-        print("1. Esegui il file update_java_config.py per aggiornare le configurazioni Java.")
-        print("2. Connettiti al server EC2 con: ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
-        print("3. Il deploy dell'applicazione ora avviene tramite AWS CodePipeline/CodeDeploy.")
-
         # --- RUOLO IAM E PIPELINE ---
         iam_client = boto3.client('iam', region_name=REGION)
         create_ec2_codedeploy_role(iam_client)
@@ -744,6 +739,21 @@ def main():
         print(f"Si è verificato un errore AWS: {e}")
     except Exception as e:
         print(f"Si è verificato un errore inaspettato: {e}")
+        print("\n==============================")
+        print("   GUIDA STEP-BY-STEP DEPLOY  ")
+        print("==============================")
+        print("1. Aggiorna i file di configurazione Java locali:")
+        print("   python scripts/infrastructure/update_java_config_on_ec2.py")
+        print("2. Fai il commit e il push delle modifiche (lo script sopra lo fa in automatico).")
+        print("3. Attendi che la pipeline AWS CodePipeline completi tutte le fasi (Source, Build, Deploy).")
+        print("   Puoi monitorare lo stato su https://console.aws.amazon.com/codesuite/codepipeline/pipelines")
+        print("4. Quando la pipeline è verde, collega il client o il browser all'applicazione su:")
+        print("   http://<server_public_ip>:8080")
+        print("5. Per accedere via SSH al server EC2:")
+        print("   ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
+        print("6. Per vedere i log dell'applicazione:")
+        print("   tail -f /home/ec2-user/musicapp/app.log")
+        print("==============================\n")
 
 if __name__ == "__main__":
     main()
