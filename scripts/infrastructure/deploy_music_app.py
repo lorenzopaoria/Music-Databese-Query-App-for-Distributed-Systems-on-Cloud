@@ -437,10 +437,13 @@ def create_codepipeline(pipeline_name, repo_owner, repo_name, branch, buildspec_
         s3.head_bucket(Bucket=artifact_bucket)
         print(f"Bucket S3 '{artifact_bucket}' già esistente.")
     except ClientError:
-        s3.create_bucket(
-            Bucket=artifact_bucket,
-            CreateBucketConfiguration={'LocationConstraint': region}
-        )
+        if region == "us-east-1":
+            s3.create_bucket(Bucket=artifact_bucket)
+        else:
+            s3.create_bucket(
+                Bucket=artifact_bucket,
+                CreateBucketConfiguration={'LocationConstraint': region}
+            )
         print(f"Bucket S3 '{artifact_bucket}' creato.")
 
     # Crea progetto CodeBuild se non esiste
