@@ -1,0 +1,14 @@
+version: 0.0
+os: linux
+files:
+  - source: mvnProject-Server/target/
+    destination: /home/ec2-user/musicapp/
+hooks:
+  BeforeInstall:
+    - location: scripts/infrastructure/before_install.sh
+      timeout: 30
+      runas: ec2-user
+  AfterInstall:
+    - location: scripts/infrastructure/restart_server.sh
+      timeout: 60
+      runas: ec2-user

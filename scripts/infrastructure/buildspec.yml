@@ -1,0 +1,18 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+    commands:
+      - echo "Install phase"
+  build:
+    commands:
+      - cd mvnProject-Server
+      - mvn clean install
+  post_build:
+    commands:
+      - echo "Build completed"
+artifacts:
+  files:
+    - mvnProject-Server/target/*.jar

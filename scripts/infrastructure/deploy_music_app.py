@@ -4,13 +4,17 @@ import os
 import psycopg2
 import json
 from botocore.exceptions import ClientError
+import dotenv
+
+# --- Carica variabili d'ambiente dal file .env dalla root del progetto ---
+dotenv.load_dotenv(dotenv_path=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '.env')))
+os.environ['GITHUB_TOKEN'] = os.getenv('GITHUB_TOKEN_API', 'INSERISCI_TOKEN_GITHUB')
 
 # --- Configurazione AWS ---
 REGION = 'us-east-1'
 KEY_PAIR_NAME = 'my-ec2-key'
 AMI_ID = 'ami-09e6f87a47903347c'
 INSTANCE_TYPE = 't2.micro'
-NUM_CLIENTS = 0  # Nessun client EC2, solo server EC2
 
 # --- Configurazione Database RDS (PostgreSQL) ---
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
@@ -188,7 +192,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
         if "DBInstanceNotFound" in str(e):
             print(f"Istanza RDS '{rds_id}' non trovata o già eliminata.")
         else:
-            print(f"Errore durante l'eliminazione dell'istanza RDS: {e}")
+            print(f"Errore durante l'eliminação dell'istanza RDS: {e}")
 
     # Delete Security Groups
     print("Eliminazione Security Groups...")
@@ -379,6 +383,175 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             conn_app.close()
 
 
+def get_account_id():
+    sts = boto3.client('sts')
+    return sts.get_caller_identity()['Account']
+
+def create_ec2_codedeploy_role(iam_client):
+    role_name = "MusicAppEC2CodeDeployRole"
+    assume_role_policy = {
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ec2.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }
+    try:
+        role = iam_client.create_role(
+            RoleName=role_name,
+            AssumeRolePolicyDocument=json.dumps(assume_role_policy),
+            Description="Role for EC2 to work with CodeDeploy"
+        )
+        print(f"Ruolo IAM '{role_name}' creato.")
+    except ClientError as e:
+        if "EntityAlreadyExists" in str(e):
+            print(f"Ruolo IAM '{role_name}' già esistente.")
+            role = iam_client.get_role(RoleName=role_name)
+        else:
+            raise
+
+    # Attach managed policy for CodeDeploy
+    policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy"
+    try:
+        iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+        print(f"Policy '{policy_arn}' associata a '{role_name}'.")
+    except ClientError as e:
+        if "EntityAlreadyExists" in str(e):
+            print(f"Policy già associata.")
+        else:
+            raise
+
+    return role['Role']['Arn']
+
+def create_codepipeline(pipeline_name, repo_owner, repo_name, branch, buildspec_path, appspec_path, region):
+    codepipeline = boto3.client('codepipeline', region_name=region)
+    codebuild = boto3.client('codebuild', region_name=region)
+    codedeploy = boto3.client('codedeploy', region_name=region)
+    s3 = boto3.client('s3', region_name=region)
+    account_id = get_account_id()
+    artifact_bucket = f"musicapp-codepipeline-artifacts-{account_id}"
+
+    # Crea bucket S3 se non esiste
+    try:
+        s3.head_bucket(Bucket=artifact_bucket)
+        print(f"Bucket S3 '{artifact_bucket}' già esistente.")
+    except ClientError:
+        s3.create_bucket(
+            Bucket=artifact_bucket,
+            CreateBucketConfiguration={'LocationConstraint': region}
+        )
+        print(f"Bucket S3 '{artifact_bucket}' creato.")
+
+    # Crea progetto CodeBuild se non esiste
+    build_project_name = f"{pipeline_name}-build"
+    try:
+        codebuild.batch_get_projects(names=[build_project_name])['projects'][0]
+        print(f"Progetto CodeBuild '{build_project_name}' già esistente.")
+    except (IndexError, ClientError):
+        codebuild.create_project(
+            name=build_project_name,
+            source={
+                'type': 'GITHUB',
+                'location': f"https://github.com/{repo_owner}/{repo_name}.git",
+                'buildspec': buildspec_path
+            },
+            artifacts={'type': 'S3', 'location': artifact_bucket},
+            environment={
+                'type': 'LINUX_CONTAINER',
+                'image': 'aws/codebuild/standard:7.0',
+                'computeType': 'BUILD_GENERAL1_SMALL'
+            },
+            serviceRole=f"arn:aws:iam::{account_id}:role/service-role/AWSCodeBuildServiceRole"
+        )
+        print(f"Progetto CodeBuild '{build_project_name}' creato.")
+
+    # Crea applicazione CodeDeploy se non esiste
+    codedeploy_app_name = f"{pipeline_name}-codedeploy"
+    try:
+        codedeploy.get_application(applicationName=codedeploy_app_name)
+        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' già esistente.")
+    except ClientError:
+        codedeploy.create_application(applicationName=codedeploy_app_name, computePlatform='Server')
+        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' creata.")
+
+    # Crea pipeline CodePipeline
+    try:
+        codepipeline.get_pipeline(name=pipeline_name)
+        print(f"Pipeline '{pipeline_name}' già esistente.")
+    except ClientError:
+        pipeline = {
+            'pipeline': {
+                'name': pipeline_name,
+                'roleArn': f"arn:aws:iam::{account_id}:role/AWSCodePipelineServiceRole",
+                'artifactStore': {
+                    'type': 'S3',
+                    'location': artifact_bucket
+                },
+                'stages': [
+                    {
+                        'name': 'Source',
+                        'actions': [{
+                            'name': 'Source',
+                            'actionTypeId': {
+                                'category': 'Source',
+                                'owner': 'ThirdParty',
+                                'provider': 'GitHub',
+                                'version': '1'
+                            },
+                            'outputArtifacts': [{'name': 'SourceArtifact'}],
+                            'configuration': {
+                                'Owner': repo_owner,
+                                'Repo': repo_name,
+                                'Branch': branch,
+                                'OAuthToken': os.environ.get('GITHUB_TOKEN', 'INSERISCI_TOKEN_GITHUB')
+                            },
+                            'runOrder': 1
+                        }]
+                    },
+                    {
+                        'name': 'Build',
+                        'actions': [{
+                            'name': 'Build',
+                            'actionTypeId': {
+                                'category': 'Build',
+                                'owner': 'AWS',
+                                'provider': 'CodeBuild',
+                                'version': '1'
+                            },
+                            'inputArtifacts': [{'name': 'SourceArtifact'}],
+                            'outputArtifacts': [{'name': 'BuildArtifact'}],
+                            'configuration': {
+                                'ProjectName': build_project_name
+                            },
+                            'runOrder': 1
+                        }]
+                    },
+                    {
+                        'name': 'Deploy',
+                        'actions': [{
+                            'name': 'Deploy',
+                            'actionTypeId': {
+                                'category': 'Deploy',
+                                'owner': 'AWS',
+                                'provider': 'CodeDeploy',
+                                'version': '1'
+                            },
+                            'inputArtifacts': [{'name': 'BuildArtifact'}],
+                            'configuration': {
+                                'ApplicationName': codedeploy_app_name,
+                                'DeploymentGroupName': 'MusicAppDeploymentGroup'
+                            },
+                            'runOrder': 1
+                        }]
+                    }
+                ],
+                'version': 1
+            }
+        }
+        codepipeline.create_pipeline(**pipeline)
+        print(f"Pipeline '{pipeline_name}' creata.")
+
 # --- Main deployment logic ---
 def main():
     if "--clean" in os.sys.argv:
@@ -544,10 +717,28 @@ def main():
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
         print("\n--- Prossimi Passi ---")
-        print("1. Esegui il file encrypt_secrets.py per aggiornare le credenziali per git actions.")
-        print("2. Esegui il file update_java_config.py per aggiornare le configurazioni Java.")
-        print("3. Connettiti al server EC2 con: ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
-        print("4. Se si esegue una push su GitHub, allora le git actions eseguiranno automaticamente la pull e il deploy dell'applicazione.")
+        print("1. Esegui il file update_java_config.py per aggiornare le configurazioni Java.")
+        print("2. Connettiti al server EC2 con: ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
+        print("3. Il deploy dell'applicazione ora avviene tramite AWS CodePipeline/CodeDeploy.")
+
+        # --- RUOLO IAM E PIPELINE ---
+        iam_client = boto3.client('iam', region_name=REGION)
+        create_ec2_codedeploy_role(iam_client)
+
+        # Prendi owner e repo dal .env
+        repo_env = os.getenv('REPO', 'lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud')
+        repo_owner, repo_name = repo_env.split('/', 1)
+
+        create_codepipeline(
+            pipeline_name="MusicAppPipeline",
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch="main",
+            buildspec_path="scripts/infrastructure/buildspec.yml",
+            appspec_path="scripts/infrastructure/appspec.yml",
+            region=REGION
+        )
+        print("Pipeline e ruolo IAM creati (o già esistenti).")
 
     except ClientError as e:
         print(f"Si è verificato un errore AWS: {e}")
