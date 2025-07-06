@@ -718,27 +718,33 @@ def main():
 
         # --- RUOLO IAM E PIPELINE ---
         iam_client = boto3.client('iam', region_name=REGION)
-        create_ec2_codedeploy_role(iam_client)
+        try:
+            create_ec2_codedeploy_role(iam_client)
+        except ClientError as e:
+            print(f"ATTENZIONE: Non è stato possibile creare o aggiornare il ruolo IAM per EC2/CodeDeploy. "
+                  f"Motivo: {e}\n"
+                  "Se il ruolo esiste già o non hai i permessi, puoi ignorare questo messaggio.")
 
         # Prendi owner e repo dal .env
         repo_env = os.getenv('REPO', 'lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud')
         repo_owner, repo_name = repo_env.split('/', 1)
 
-        create_codepipeline(
-            pipeline_name="MusicAppPipeline",
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            branch="main",
-            buildspec_path="scripts/infrastructure/buildspec.yml",
-            appspec_path="scripts/infrastructure/appspec.yml",
-            region=REGION
-        )
-        print("Pipeline e ruolo IAM creati (o già esistenti).")
+        try:
+            create_codepipeline(
+                pipeline_name="MusicAppPipeline",
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch="main",
+                buildspec_path="scripts/infrastructure/buildspec.yml",
+                appspec_path="scripts/infrastructure/appspec.yml",
+                region=REGION
+            )
+            print("Pipeline creata (o già esistente).")
+        except ClientError as e:
+            print(f"ATTENZIONE: Non è stato possibile creare o aggiornare la pipeline CodePipeline. "
+                  f"Motivo: {e}\n"
+                  "Verifica i permessi o crea la pipeline manualmente dalla console AWS.")
 
-    except ClientError as e:
-        print(f"Si è verificato un errore AWS: {e}")
-    except Exception as e:
-        print(f"Si è verificato un errore inaspettato: {e}")
         print("\n==============================")
         print("   GUIDA STEP-BY-STEP DEPLOY  ")
         print("==============================")
@@ -746,14 +752,19 @@ def main():
         print("   python scripts/infrastructure/update_java_config_on_ec2.py")
         print("2. Fai il commit e il push delle modifiche (lo script sopra lo fa in automatico).")
         print("3. Attendi che la pipeline AWS CodePipeline completi tutte le fasi (Source, Build, Deploy).")
-        print("   Puoi monitorare lo stato su https://console.aws.amazon.com/codesuite/codepipeline/pipelines")
-        print("4. Quando la pipeline è verde, collega il client o il browser all'applicazione su:")
-        print("   http://<server_public_ip>:8080")
+        print("   Puoi monitorare lo stato da AWS Console -> CodePipeline.")
+        print("4. Quando la pipeline è verde, collega il client o il browser all'applicazione:")
+        print("   vai nella cartella mvnProject-Client e lancia anche tramite mvn -Pclient exec:java")
         print("5. Per accedere via SSH al server EC2:")
         print("   ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
         print("6. Per vedere i log dell'applicazione:")
         print("   tail -f /home/ec2-user/musicapp/app.log")
         print("==============================\n")
+
+    except ClientError as e:
+        print(f"Si è verificato un errore AWS: {e}")
+    except Exception as e:
+        print(f"Si è verificato un errore inaspettato: {e}")
 
 if __name__ == "__main__":
     main()
