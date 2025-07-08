@@ -20,7 +20,7 @@ public class DatabaseClient {
     static {
         AUTOMATED_QUERIES.add(new QueryTest("SELECT * FROM contenuto LIMIT 5")); // Query SELECT (permessa a tutti)
         AUTOMATED_QUERIES.add(new QueryTest("UPDATE contenuto SET nome = 'Test Title PG' WHERE \"idContenuto\" = 1")); // Query UPDATE (permessa a premium e admin)
-        AUTOMATED_QUERIES.add(new QueryTest("INSERT INTO contenuto (nome, durata, riproduzione, tipo) VALUES ('New Song PG', 180, 0, 1)")); // Query INSERT (permessa a premium e admin)
+        AUTOMATED_QUERIES.add(new QueryTest("INSERT INTO contenuto (nome, durata, riproduzione, tipo) VALUES ('New Song PG', 180, 0, 1)")); // Query INSERT (permessa a admin)
         AUTOMATED_QUERIES.add(new QueryTest("DELETE FROM contenuto WHERE \"idContenuto\" = 1")); // Query DELETE (permessa solo ad admin)
     }
 
