@@ -50,6 +50,10 @@ public class DatabaseClient {
 
             AUTOMATED_QUERIES.forEach(query -> testQuery(output, input, sessionId, query, user));
 
+            // Send EXIT command to gracefully close the connection
+            output.writeObject("EXIT");
+            output.flush();
+
         } catch (IOException | ClassNotFoundException e) {
             System.err.println("Error during automated test for user " + user.email + ": " + e.getMessage());
         }
@@ -161,6 +165,9 @@ public class DatabaseClient {
 
                     if (userInputQuery.equalsIgnoreCase("exit")) {
                         System.out.println("Exiting interactive session.");
+                        // Send EXIT command to server
+                        output.writeObject("EXIT");
+                        output.flush();
                         break;
                     }
 

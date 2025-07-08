@@ -161,11 +161,23 @@ public class DatabaseServer {
                             return;//esce quando il client si disconnette
                     }
                 }
+            } catch (EOFException eof) {
+                // Client disconnected or sent no more data. Log at INFO level.
+                LOGGER.info("Client disconnected: " + socket.getRemoteSocketAddress());
+                // Optionally, clean up resources here
             } catch (IOException | ClassNotFoundException e) {
                 LOGGER.log(Level.SEVERE, "Error handling client connection", e);
             } finally {
                 try {
-                    socket.close();
+                    if (input != null) {
+                        input.close();
+                    }
+                    if (output != null) {
+                        output.close();
+                    }
+                    if (socket != null && !socket.isClosed()) {
+                        socket.close();
+                    }
                 } catch (IOException e) {
                     LOGGER.log(Level.WARNING, "Error closing client socket", e);
                 }
@@ -185,11 +197,13 @@ public class DatabaseServer {
                     server.addSession(newSession);
                     session = newSession;
                     output.writeObject("Authentication successful:" + newSession.getSessionId());
+                    LOGGER.info("User authenticated successfully: " + email + " with role: " + userRole);
                 } else {
                     output.writeObject("Authentication failed");
+                    LOGGER.info("Authentication failed for user: " + email);
                 }
             } catch (SQLException e) {
-                LOGGER.log(Level.SEVERE, "Authentication error", e);
+                LOGGER.log(Level.WARNING, "Authentication error for user: " + email, e);
                 output.writeObject("Authentication error: " + e.getMessage());
             }
             output.flush();

@@ -50,6 +50,11 @@ jobs:
             git fetch origin
             git reset --hard origin/main
             
+            # Pre-cleanup: Ferma e rimuove tutti i container che usano la porta 8080
+            echo "Pre-cleanup: Fermando tutti i container che usano la porta 8080..."
+            docker ps --filter "publish=8080" -q | xargs -r docker stop || true
+            docker ps --filter "publish=8080" -q | xargs -r docker rm || true
+            
             # Ferma tutti i container che usano la porta 8080
             echo "Fermando tutti i container che usano la porta 8080..."
             docker ps -q --filter "publish=8080" | xargs -r docker stop || true
@@ -81,7 +86,10 @@ jobs:
             
             # Ricostruisce e avvia il container Docker
             echo "Ricostruendo il container Docker..."
-            docker build -f Dockerfile.dockerfile -t musicapp-server .
+            if ! docker build -f Dockerfile.dockerfile -t musicapp-server .; then
+              echo "Errore durante la build del container Docker"
+              exit 1
+            fi
             
             # Avvia il nuovo container
             echo "Avviando il nuovo container..."
@@ -128,6 +136,7 @@ jobs:
                 # Verifica che la porta sia aperta e in ascolto (senza inviare dati HTTP)
               if timeout 3 bash -c "</dev/tcp/localhost/8080" 2>/dev/null; then
                 echo "Applicazione risponde correttamente sulla porta 8080"
+                break
               else
                 echo "Tentativo $i/10 - Applicazione non ancora pronta, attendo 10 secondi..."
                 sleep 10
@@ -136,6 +145,8 @@ jobs:
                 echo "Applicazione non risponde dopo 10 tentativi"
                 echo "Log del container:"
                 docker logs musicapp-server
+                echo "Stato del container:"
+                docker ps -a --filter "name=musicapp-server"
                 exit 1
               fi
             done
