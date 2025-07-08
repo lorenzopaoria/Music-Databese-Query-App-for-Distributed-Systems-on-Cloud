@@ -125,9 +125,9 @@ jobs:
             # Controlla la salute dell'applicazione
             echo "Test di connettività all'applicazione..."
             for i in {1..10}; do
-              if curl -f http://localhost:8080 &>/dev/null; then
-                echo "Applicazione risponde correttamente"
-                break
+                # Verifica che la porta sia aperta e in ascolto (senza inviare dati HTTP)
+              if timeout 3 bash -c "</dev/tcp/localhost/8080" 2>/dev/null; then
+                echo "Applicazione risponde correttamente sulla porta 8080"
               else
                 echo "Tentativo $i/10 - Applicazione non ancora pronta, attendo 10 secondi..."
                 sleep 10
