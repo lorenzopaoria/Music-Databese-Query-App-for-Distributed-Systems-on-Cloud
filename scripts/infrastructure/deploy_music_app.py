@@ -544,8 +544,8 @@ def main():
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
         print("\n--- Prossimi Passi ---")
-        print("1. Esegui il file encrypt_secrets.py per aggiornare le credenziali per git actions.")
-        print("2. Esegui il file update_java_config.py per aggiornare le configurazioni Java.")
+        print("1. Esegui il file update_github_secrets.py per aggiornare le credenziali per git actions.")
+        print("2. Esegui il file update_java_config_on_ec2.py per aggiornare le configurazioni Java.")
         print("3. Connettiti al server EC2 con: ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
         print("4. Se si esegue una push su GitHub, allora le git actions eseguiranno automaticamente la pull e il deploy dell'applicazione.")
 
