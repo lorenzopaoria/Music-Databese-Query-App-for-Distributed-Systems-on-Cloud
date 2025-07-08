@@ -10,87 +10,93 @@ REGION = 'us-east-1'
 KEY_PAIR_NAME = 'my-ec2-key'
 AMI_ID = 'ami-09e6f87a47903347c'
 INSTANCE_TYPE = 't2.micro'
-NUM_CLIENTS = 0  # Nessun client EC2, solo server EC2
 
-# --- Configurazione Database RDS (PostgreSQL) ---
+# --- Configurazione Database RDS ---
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
 DB_ENGINE = 'postgres'
-DB_ENGINE_VERSION = '17.4' 
+DB_ENGINE_VERSION = '17.4'
 DB_INSTANCE_CLASS = 'db.t3.micro'
-DB_ALLOCATED_STORAGE = 20 
-DB_MASTER_USERNAME = 'dbadmin' 
-DB_MASTER_PASSWORD = '12345678' 
+DB_ALLOCATED_STORAGE = 20
+DB_MASTER_USERNAME = 'dbadmin'
+DB_MASTER_PASSWORD = '12345678'
 DB_NAME = 'musicdb'
 
 # --- Funzioni di supporto ---
 def get_key_pair(ec2_client, key_name):
+    """
+    Controlla se la key pair EC2 esiste,se non esiste la crea e salva il file .pem localmente.
+    """
     try:
         response = ec2_client.describe_key_pairs(KeyNames=[key_name])
-        print(f"La chiave EC2 '{key_name}' esiste già.")
+        print(f"EC2 key '{key_name}' già esistente.")
         return response['KeyPairs'][0]['KeyName']
     except ClientError as e:
         if "InvalidKeyPair.NotFound" in str(e):
-            print(f"La chiave EC2 '{key_name}' non trovata. Creazione in corso...")
+            print(f"EC2 key '{key_name}' non trovata. Creazione in corso...")
             key_pair = ec2_client.create_key_pair(KeyName=key_name)
             with open(f"{key_name}.pem", "w") as f:
                 f.write(key_pair['KeyMaterial'])
             os.chmod(f"{key_name}.pem", 0o400)
-            print(f"Chiave '{key_name}.pem' creata.")
+            print(f"Key '{key_name}.pem' creata.")
             return key_pair['KeyName']
         else:
             raise
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
-    print("Verifica o creazione di VPC e Security Groups...")
-    # Get default VPC
+    """
+    Verifica che la VPC di default esista e crea o recupera i Security Group necessari per EC2 e RDS.
+    Imposta anche le regole di ingresso per PostgreSQL, SSH e traffico applicativo.
+    """
+    print("Controllo o creazione di VPC e Security Groups...")
+    # Ottieni la VPC di default
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
-    print(f"VPC predefinito trovato: {vpc_id}")
+    print(f"VPC di default trovata: {vpc_id}")
 
-    # Create Security Group for RDS
+    # Crea Security Group per RDS
     try:
         rds_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppRDSSecurityGroup',
-            Description='Allow PostgreSQL access for MusicApp EC2 instances and local script',
+            Description='Consenti accesso PostgreSQL per EC2 MusicApp e script locale',
             VpcId=vpc_id
         )
         rds_security_group_id = rds_sg_response['GroupId']
-        print(f"Security Group RDS creato: {rds_security_group_id}")
+        print(f"Security Group RDS creata: {rds_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             rds_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppRDSSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group RDS esistente: {rds_security_group_id}")
+            print(f"Security Group RDS già esistente: {rds_security_group_id}")
         else:
             raise
 
-    # Create Security Group for EC2
+    # Crea Security Group per EC2
     try:
         ec2_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppEC2SecurityGroup',
-            Description='Allow SSH and application traffic to MusicApp EC2 instances',
+            Description='Consenti SSH e traffico applicativo alle istanze EC2 MusicApp',
             VpcId=vpc_id
         )
         ec2_security_group_id = ec2_sg_response['GroupId']
-        print(f"Security Group EC2 creato: {ec2_security_group_id}")
+        print(f"Security Group EC2 creata: {ec2_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             ec2_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppEC2SecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group EC2 esistente: {ec2_security_group_id}")
+            print(f"Security Group EC2 già esistente: {ec2_security_group_id}")
         else:
             raise
 
-    # Authorize ingress for RDS SG (from EC2 SG)
+    # Autorizza ingresso per SG RDS (da EC2 SG)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=rds_security_group_id,
             IpPermissions=[
                 {
                     'IpProtocol': 'tcp',
-                    'FromPort': 5432, # PostgreSQL port
+                    'FromPort': 5432, # Porta PostgreSQL
                     'ToPort': 5432,
                     'UserIdGroupPairs': [{'GroupId': ec2_security_group_id}]
                 }
@@ -103,27 +109,27 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # Authorize ingress for RDS SG from local machine
+    # Autorizza ingresso per SG RDS da macchina locale (solo per inizializzazione DB, sviluppo)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=rds_security_group_id,
             IpPermissions=[
                 {
                     'IpProtocol': 'tcp',
-                    'FromPort': 5432, # PostgreSQL port
+                    'FromPort': 5432, # Porta PostgreSQL
                     'ToPort': 5432,
-                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'Allow local script access for DB init (dev only)'}]
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'Consenti accesso script locale per init DB (solo sviluppo)'}]
                 }
             ]
         )
-        print("Regola di ingresso RDS SG autorizzata per 0.0.0.0/0 (necessaria per l'inizializzazione locale).")
+        print("Regola di ingresso RDS SG autorizzata per 0.0.0.0/0 (per inizializzazione locale).")
     except ClientError as e:
         if 'InvalidPermission.Duplicate' in str(e):
             print("Regola di ingresso RDS SG già esistente (0.0.0.0/0->RDS).")
         else:
             raise
             
-    # Authorize ingress for EC2
+    # Autorizza ingresso per EC2 (SSH e porta app)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=ec2_security_group_id,
@@ -136,7 +142,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
                 },
                 {
                     'IpProtocol': 'tcp',
-                    'FromPort': 8080, # Application port
+                    'FromPort': 8080, # Porta applicazione
                     'ToPort': 8080,
                     'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
                 }
@@ -152,10 +158,13 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
     return vpc_id, rds_security_group_id, ec2_security_group_id
 
 def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_sg_name):
-    print("Avvio pulizia risorse AWS...")
+    """
+    Elimina tutte le risorse AWS create da questo deployment: istanze EC2, istanza RDS, Security Groups e Key Pair.
+    """
+    print("Avvio della pulizia delle risorse AWS...")
 
-    # Terminate EC2 instances
-    print("Terminazione istanze EC2...")
+    # Termina le istanze EC2
+    print("Terminazione delle istanze EC2...")
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values': ['MusicApp']}]
     )
@@ -166,21 +175,21 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
                 instance_ids.append(instance['InstanceId'])
     if instance_ids:
         ec2_client.terminate_instances(InstanceIds=instance_ids)
-        print(f"Istanze EC2 terminate: {instance_ids}. Attesa terminazione...")
+        print(f"Istanze EC2 terminate: {instance_ids}. Attesa della terminazione...")
         waiter = ec2_client.get_waiter('instance_terminated')
         waiter.wait(InstanceIds=instance_ids)
         print("Istanze EC2 terminate con successo.")
     else:
         print("Nessuna istanza EC2 'MusicApp' trovata da terminare.")
 
-    # Delete RDS instance
-    print(f"Eliminazione istanza RDS '{rds_id}'...")
+    # Elimina istanza RDS
+    print(f"Eliminazione dell'istanza RDS '{rds_id}'...")
     try:
         rds_client.delete_db_instance(
             DBInstanceIdentifier=rds_id,
             SkipFinalSnapshot=True
         )
-        print(f"Istanza RDS '{rds_id}' eliminata. Attesa eliminazione...")
+        print(f"Istanza RDS '{rds_id}' eliminata. Attesa della cancellazione...")
         waiter = rds_client.get_waiter('db_instance_deleted')
         waiter.wait(DBInstanceIdentifier=rds_id)
         print(f"Istanza RDS '{rds_id}' eliminata con successo.")
@@ -190,12 +199,12 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
         else:
             print(f"Errore durante l'eliminazione dell'istanza RDS: {e}")
 
-    # Delete Security Groups
-    print("Eliminazione Security Groups...")
+    # Elimina Security Groups
+    print("Eliminazione dei Security Groups...")
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     
-    # Tentativo di eliminare i SG in un ordine che riduca le violazioni di dipendenza
+    # Prova a eliminare i SG in un ordine che riduca le dipendenze
     sg_to_delete = []
     try:
         rds_sg_id = ec2_client.describe_security_groups(
@@ -213,23 +222,22 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     except ClientError as e:
         if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
 
-    # Tentativo di rimuovere prima le regole di ingresso inter-SG
+    # Prova a revocare tutte le regole di ingresso prima di eliminare i SG
     for sg_id in sg_to_delete:
         try:
-            # Revoca tutte le regole di ingresso per il SG
             sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
             if 'IpPermissions' in sg_details and sg_details['IpPermissions']:
                 ec2_client.revoke_security_group_ingress(
                     GroupId=sg_id,
                     IpPermissions=sg_details['IpPermissions']
                 )
-                print(f"Revocate regole di ingresso per SG {sg_id}.")
+                print(f"Regole di ingresso revocate per SG {sg_id}.")
         except ClientError as e:
             if 'InvalidPermission.NotFound' not in str(e):
-                print(f"Avviso: Impossibile revocare regole di ingresso per {sg_id}: {e}")
+                print(f"Attenzione: impossibile revocare regole di ingresso per {sg_id}: {e}")
 
     # Ora elimina i SG
-    for sg_name_current in [rds_sg_name, ec2_sg_name]: # Ordine fisso per ridurre dipendenze
+    for sg_name_current in [rds_sg_name, ec2_sg_name]:
         try:
             sg_id_current = ec2_client.describe_security_groups(
                 GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
@@ -240,12 +248,12 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             if "InvalidGroup.NotFound" in str(e):
                 print(f"Security Group '{sg_name_current}' non trovato o già eliminato.")
             elif "DependencyViolation" in str(e):
-                print(f"Errore: Il Security Group '{sg_name_current}' ha ancora dipendenze. Riprovare tra qualche istante o eliminare manualmente.")
+                print(f"Errore: Security Group '{sg_name_current}' ha ancora dipendenze. Riprova più tardi o elimina manualmente.")
             else:
                 print(f"Errore durante l'eliminazione del Security Group '{sg_name_current}': {e}")
     
-    # Delete Key Pair
-    print(f"Eliminazione Key Pair '{key_name}'...")
+    # Elimina Key Pair
+    print(f"Eliminazione della Key Pair '{key_name}'...")
     try:
         ec2_client.delete_key_pair(KeyName=key_name)
         print(f"Key Pair '{key_name}' eliminata da AWS.")
@@ -254,9 +262,9 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
                 os.remove(f"{key_name}.pem")
                 print(f"File locale '{key_name}.pem' eliminato.")
             except PermissionError:
-                print(f"AVVISO: Impossibile eliminare il file locale '{key_name}.pem' a causa di un errore di permessi (potrebbe essere in uso). Eliminalo manualmente.")
+                print(f"ATTENZIONE: impossibile eliminare il file locale '{key_name}.pem' per errore di permessi (potrebbe essere in uso). Elimina manualmente.")
             except Exception as file_e:
-                print(f"AVVISO: Errore durante l'eliminazione del file locale '{key_name}.pem': {file_e}")
+                print(f"ATTENZIONE: errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
     except ClientError as e:
         if "InvalidKeyPair.NotFound" in str(e):
             print(f"Key Pair '{key_name}' non trovata o già eliminata in AWS.")
@@ -265,24 +273,24 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
                     os.remove(f"{key_name}.pem")
                     print(f"File locale '{key_name}.pem' eliminato.")
                 except PermissionError:
-                    print(f"AVVISO: Impossibile eliminare il file locale '{key_name}.pem' a causa di un errore di permessi (potrebbe essere in uso). Eliminalo manualmente.")
+                    print(f"ATTENZIONE: impossibile eliminare il file locale '{key_name}.pem' per errore di permessi (potrebbe essere in uso). Elimina manualmente.")
                 except Exception as file_e:
-                    print(f"AVVISO: Errore durante l'eliminazione del file locale '{key_name}.pem': {file_e}")
+                    print(f"ATTENZIONE: errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
         else:
             print(f"Errore durante l'eliminazione della Key Pair in AWS: {e}")
             raise
 
-    print("Pulizia risorse AWS completata.")
+    print("Pulizia delle risorse AWS completata.")
 
 
 def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_sql, data_sql):
     print(f"\nInizializzazione del database '{db_name}' su {rds_endpoint}...")
 
-    # Connessione al database "postgres" (il database predefinito) per drop/create
+    # Connessione al database "postgres" (database di default) per operazioni di drop/create
     conn_str_master = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
     conn = None
     try:
-        # Tentativo di connessione con retry per dare tempo all'RDS di avviarsi
+        # Prova a connetterti con tentativi multipli per dare tempo all'RDS di avviarsi
         for i in range(5):
             try:
                 conn = psycopg2.connect(conn_str_master)
@@ -290,7 +298,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
                 print("Connesso al database 'postgres' per la gestione.")
                 break
             except psycopg2.OperationalError as e:
-                print(f"Tentativo {i+1} di connessione fallito: {e}. Attesa 10 secondi...")
+                print(f"Tentativo {i+1} di connessione fallito: {e}. Attesa di 10 secondi...")
                 time.sleep(10)
         if conn is None:
             raise Exception("Impossibile connettersi al database master PostgreSQL.")
@@ -298,7 +306,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         cur = conn.cursor()
 
         # 1. Termina tutte le connessioni al database target
-        print(f"Terminazione connessioni attive al database '{db_name}'...")
+        print(f"Terminazione delle connessioni attive al database '{db_name}'...")
         try:
             cur.execute(f"""
                 SELECT pg_terminate_backend(pg_stat_activity.pid)
@@ -308,58 +316,58 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             """)
             print(f"Connessioni terminate per '{db_name}'.")
         except Exception as e:
-            print(f"Avviso: Errore durante la terminazione delle connessioni (potrebbe non esistere o non avere permessi): {e}")
+            print(f"Attenzione: errore nella terminazione delle connessioni (potrebbe non esistere o mancare permessi): {e}")
 
-        # 2. Drop del database esistente (se esiste)
-        print(f"Tentativo di drop del database '{db_name}' (se esiste)...")
+        # 2. Elimina il database esistente (se esiste)
+        print(f"Tentativo di eliminazione del database '{db_name}' (se esiste)...")
         try:
             cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
             print(f"Database '{db_name}' eliminato (o non esisteva).")
         except Exception as e:
-            print(f"Errore durante il drop del database '{db_name}': {e}")
-            raise # Rilancia l'errore se non si riesce a eliminare il DB
+            print(f"Errore nell'eliminazione del database '{db_name}': {e}")
+            raise # Rilancia errore se impossibile eliminare DB
 
-        # 3. Creazione del database
+        # 3. Crea il database
         print(f"Creazione del database '{db_name}'...")
         cur.execute(f"CREATE DATABASE {db_name};")
         print(f"Database '{db_name}' creato.")
 
         cur.close()
-        conn.close() # Chiudi la connessione al database master
+        conn.close() # Chiudi connessione al database master
 
-        # Connessione al database appena creato per schema e dati
+        # Connettiti al nuovo database per inizializzazione schema e dati
         conn_str_app = f"dbname={db_name} user={db_username} password={db_password} host={rds_endpoint} port=5432"
         conn_app = None
         for i in range(5):
             try:
                 conn_app = psycopg2.connect(conn_str_app)
-                print(f"Connesso al database '{db_name}' per l'inizializzazione dello schema.")
+                print(f"Connesso al database '{db_name}' per inizializzazione schema.")
                 break
             except psycopg2.OperationalError as e:
-                print(f"Tentativo {i+1} di connessione al DB dell'app fallito: {e}. Attesa 5 secondi...")
+                print(f"Tentativo {i+1} di connessione al DB app fallito: {e}. Attesa di 5 secondi...")
                 time.sleep(5)
         if conn_app is None:
-            raise Exception("Impossibile connettersi al database dell'applicazione.")
+            raise Exception("Impossibile connettersi al database applicativo.")
 
         conn_app.autocommit = True # Per eseguire più statement DDL/DML senza commit esplicito
         cur_app = conn_app.cursor()
 
-        # Esecuzione dello schema
-        print("Esecuzione dello schema.sql...")
+        # Esegui schema.sql
+        print("Esecuzione di schema.sql...")
         try:
             cur_app.execute(schema_sql)
-            print("Schema.sql eseguito con successo.")
+            print("schema.sql eseguito con successo.")
         except Exception as e:
-            print(f"Errore durante l'esecuzione dello schema SQL: {e}")
+            print(f"Errore nell'esecuzione dello schema SQL: {e}")
             raise
 
-        # Esecuzione dei dati
-        print("Esecuzione dei dati.sql...")
+        # Esegui data.sql
+        print("Esecuzione di data.sql...")
         try:
             cur_app.execute(data_sql)
-            print("Dati.sql eseguiti con successo.")
+            print("data.sql eseguito con successo.")
         except Exception as e:
-            print(f"Errore durante l'esecuzione del comando SQL per i dati: {e}")
+            print(f"Errore nell'esecuzione del comando SQL per i dati: {e}")
             raise
 
         cur_app.close()
@@ -368,9 +376,9 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
 
     except psycopg2.Error as e:
         print(f"Errore durante l'inizializzazione del database: {e}")
-        raise # Rilancia l'errore per fermare lo script principale
+        raise # Rilancia errore per fermare lo script principale
     except Exception as e:
-        print(f"Si è verificato un errore inaspettato durante l'inizializzazione del database: {e}")
+        print(f"Si è verificato un errore inatteso durante l'inizializzazione del database: {e}")
         raise
     finally:
         if conn:
@@ -379,7 +387,179 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             conn_app.close()
 
 
-# --- Main deployment logic ---
+def get_account_id():
+    sts = boto3.client('sts')
+    return sts.get_caller_identity()['Account']
+
+def create_ec2_codedeploy_role(iam_client):
+    role_name = "MusicAppEC2CodeDeployRole"
+    assume_role_policy = {
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ec2.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }
+    try:
+        role = iam_client.create_role(
+            RoleName=role_name,
+            AssumeRolePolicyDocument=json.dumps(assume_role_policy),
+            Description="Ruolo per EC2 per lavorare con CodeDeploy"
+        )
+        print(f"Ruolo IAM '{role_name}' creato.")
+    except ClientError as e:
+        if "EntityAlreadyExists" in str(e):
+            print(f"Ruolo IAM '{role_name}' già esistente.")
+            role = iam_client.get_role(RoleName=role_name)
+        else:
+            raise
+
+    # Associa la policy gestita per CodeDeploy
+    policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy"
+    try:
+        iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+        print(f"Policy '{policy_arn}' associata a '{role_name}'.")
+    except ClientError as e:
+        if "EntityAlreadyExists" in str(e):
+            print(f"Policy già associata.")
+        else:
+            raise
+
+    return role['Role']['Arn']
+
+def create_codepipeline(pipeline_name, repo_owner, repo_name, branch, buildspec_path, appspec_path, region):
+    codepipeline = boto3.client('codepipeline', region_name=region)
+    codebuild = boto3.client('codebuild', region_name=region)
+    codedeploy = boto3.client('codedeploy', region_name=region)
+    s3 = boto3.client('s3', region_name=region)
+    account_id = get_account_id()
+    artifact_bucket = f"musicapp-codepipeline-artifacts-{account_id}"
+
+    # Crea bucket S3 se non esiste
+    try:
+        s3.head_bucket(Bucket=artifact_bucket)
+        print(f"Bucket S3 '{artifact_bucket}' già esistente.")
+    except ClientError:
+        if region == "us-east-1":
+            s3.create_bucket(Bucket=artifact_bucket)
+        else:
+            s3.create_bucket(
+                Bucket=artifact_bucket,
+                CreateBucketConfiguration={'LocationConstraint': region}
+            )
+        print(f"Bucket S3 '{artifact_bucket}' creato.")
+
+    # Crea progetto CodeBuild se non esiste
+    build_project_name = f"{pipeline_name}-build"
+    try:
+        codebuild.batch_get_projects(names=[build_project_name])['projects'][0]
+        print(f"Progetto CodeBuild '{build_project_name}' già esistente.")
+    except (IndexError, ClientError):
+        codebuild.create_project(
+            name=build_project_name,
+            source={
+                'type': 'GITHUB',
+                'location': f"https://github.com/{repo_owner}/{repo_name}.git",
+                'buildspec': buildspec_path
+            },
+            artifacts={'type': 'S3', 'location': artifact_bucket},
+            environment={
+                'type': 'LINUX_CONTAINER',
+                'image': 'aws/codebuild/standard:7.0',
+                'computeType': 'BUILD_GENERAL1_SMALL'
+            },
+            serviceRole=f"arn:aws:iam::{account_id}:role/service-role/AWSCodeBuildServiceRole"
+        )
+        print(f"Progetto CodeBuild '{build_project_name}' creato.")
+
+    # Crea applicazione CodeDeploy se non esiste
+    codedeploy_app_name = f"{pipeline_name}-codedeploy"
+    try:
+        codedeploy.get_application(applicationName=codedeploy_app_name)
+        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' già esistente.")
+    except ClientError:
+        codedeploy.create_application(applicationName=codedeploy_app_name, computePlatform='Server')
+        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' creata.")
+
+    # Crea pipeline CodePipeline
+    try:
+        codepipeline.get_pipeline(name=pipeline_name)
+        print(f"Pipeline '{pipeline_name}' già esistente.")
+    except ClientError:
+        pipeline = {
+            'pipeline': {
+                'name': pipeline_name,
+                'roleArn': f"arn:aws:iam::{account_id}:role/AWSCodePipelineServiceRole",
+                'artifactStore': {
+                    'type': 'S3',
+                    'location': artifact_bucket
+                },
+                'stages': [
+                    {
+                        'name': 'Source',
+                        'actions': [{
+                            'name': 'Source',
+                            'actionTypeId': {
+                                'category': 'Source',
+                                'owner': 'ThirdParty',
+                                'provider': 'GitHub',
+                                'version': '1'
+                            },
+                            'outputArtifacts': [{'name': 'SourceArtifact'}],
+                            'configuration': {
+                                'Owner': repo_owner,
+                                'Repo': repo_name,
+                                'Branch': branch,
+                                'OAuthToken': os.environ.get('GITHUB_TOKEN', 'INSERISCI_TOKEN_GITHUB')
+                            },
+                            'runOrder': 1
+                        }]
+                    },
+                    {
+                        'name': 'Build',
+                        'actions': [{
+                            'name': 'Build',
+                            'actionTypeId': {
+                                'category': 'Build',
+                                'owner': 'AWS',
+                                'provider': 'CodeBuild',
+                                'version': '1'
+                            },
+                            'inputArtifacts': [{'name': 'SourceArtifact'}],
+                            'outputArtifacts': [{'name': 'BuildArtifact'}],
+                            'configuration': {
+                                'ProjectName': build_project_name
+                            },
+                            'runOrder': 1
+                        }]
+                    },
+                    {
+                        'name': 'Deploy',
+                        'actions': [{
+                            'name': 'Deploy',
+                            'actionTypeId': {
+                                'category': 'Deploy',
+                                'owner': 'AWS',
+                                'provider': 'CodeDeploy',
+                                'version': '1'
+                            },
+                            'inputArtifacts': [{'name': 'BuildArtifact'}],
+                            'configuration': {
+                                'ApplicationName': codedeploy_app_name,
+                                'DeploymentGroupName': 'MusicAppDeploymentGroup'
+                            },
+                            'runOrder': 1
+                        }]
+                    }
+                ],
+                'version': 1
+            }
+        }
+        codepipeline.create_pipeline(**pipeline)
+        print(f"Pipeline '{pipeline_name}' creata.")
+
+# --- Logica principale di deploy ---
 def main():
     if "--clean" in os.sys.argv:
         ec2 = boto3.client('ec2', region_name=REGION)
@@ -390,7 +570,7 @@ def main():
     ec2_client = boto3.client('ec2', region_name=REGION)
     rds_client = boto3.client('rds', region_name=REGION)
 
-    # --- LEGGI I FILE SQL ---
+    # --- LETTURA FILE SQL ---
     schema_sql_path = os.path.join(
         os.path.dirname(__file__),
         '..', '..', 'Database', 'Sql', 'schema.sql'
@@ -411,11 +591,11 @@ def main():
         # 2. Crea VPC e Security Groups
         vpc_id, rds_security_group_id, ec2_security_group_id = create_vpc_and_security_groups(ec2_client, rds_client)
 
-        # 3. Deploy RDS Instance
+        # 3. Deploy istanza RDS
         print(f"\nTentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'...")
         rds_endpoint = None
         try:
-            # Try to describe if it already exists and is available
+            # Prova a descrivere se già esiste ed è disponibile
             response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
             instance_status = response['DBInstances'][0]['DBInstanceStatus']
             rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
@@ -426,7 +606,7 @@ def main():
                 waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
-                print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' è ora 'available'.")
+                print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' ora è 'available'.")
         except ClientError as e:
             if "DBInstanceNotFound" in str(e):
                 print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' non trovata. Creazione in corso...")
@@ -440,22 +620,22 @@ def main():
                     DBName=DB_NAME,
                     VpcSecurityGroupIds=[rds_security_group_id],
                     EngineVersion=DB_ENGINE_VERSION,
-                    PubliclyAccessible=True # Per debug e accesso da locale, cambia a False per sicurezza in prod
+                    PubliclyAccessible=True # Per debug e accesso locale, impostare a False per sicurezza in produzione
                 )
                 print(f"Creazione dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}' avviata. Attesa che diventi 'available'...")
                 waiter = rds_client.get_waiter('db_instance_available')
                 waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
-                print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' è ora 'available'. Endpoint: {rds_endpoint}")
+                print(f"Istanza RDS '{DB_INSTANCE_IDENTIFIER}' ora è 'available'. Endpoint: {rds_endpoint}")
             else:
                 raise
 
         if not rds_endpoint:
             raise Exception("Impossibile ottenere l'endpoint RDS.")
 
-        # 4. Inizializza il database con lo schema e i dati
-        print("Inizializzazione database RDS con schema e dati...")
+        # 4. Inizializza il database con schema e dati
+        print("Inizializzazione del database RDS con schema e dati...")
         initialize_database(
             rds_endpoint=rds_endpoint,
             db_username=DB_MASTER_USERNAME,
@@ -465,11 +645,11 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. Get User Data Script
+        # 5. Ottieni User Data Script
         with open('user_data_script.sh', 'r') as f:
             user_data_script = f.read()
 
-        # 6. Deploy MusicAppServer EC2 instance (or use existing)
+        # 6. Deploy istanza EC2 MusicAppServer (o usa esistente)
         server_public_ip = None
         server_private_ip = None
         server_instances_found = ec2_client.describe_instances(
@@ -483,7 +663,7 @@ def main():
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
             server_public_ip = server_instances_found[0]['Instances'][0].get('PublicIpAddress')
             server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
-            print(f"\nIstanza MusicAppServer esistente e running: {server_instance_id}. IP Pubblico: {server_public_ip}, IP Privato: {server_private_ip}")
+            print(f"\nIstanza MusicAppServer esistente e in esecuzione: {server_instance_id}. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
         else:
             print("\nDeploy dell'istanza EC2 'MusicAppServer'...")
             server_instances = ec2_client.run_instances(
@@ -511,22 +691,22 @@ def main():
             server_instance_details = ec2_client.describe_instances(InstanceIds=[server_instance_id])
             server_public_ip = server_instance_details['Reservations'][0]['Instances'][0]['PublicIpAddress']
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
-            print(f"MusicAppServer è running. IP Pubblico: {server_public_ip}, IP Privato: {server_private_ip}")
+            print(f"MusicAppServer è in esecuzione. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
 
-        # 7. Deploy MusicAppClient EC2 instances (or use existing)
+        # 7. Deploy istanze EC2 MusicAppClient (o usa esistenti)
         client_public_ips = []
         client_private_ips = []
-        # Nessun deploy client EC2: client sarà in localhost
-        print("\n--- Deploy Completato ---")
-        print("Dettagli per la connessione:")
-        print(f"Chiave SSH: {key_pair_name_actual}.pem")
-        print(f"Endpoint RDS: {rds_endpoint}")
-        print(f"Utente DB: {DB_MASTER_USERNAME}")
-        print(f"Password DB: {DB_MASTER_PASSWORD}")
-        print(f"Nome DB: {DB_NAME}")
-        print(f"\nIP Pubblico Server EC2: {server_public_ip}")
-        print(f"IP Privato Server EC2 (per client nella stessa VPC): {server_private_ip}")
-        print(f"Client locale: usa l'IP pubblico del server EC2 per connettersi")
+        # Nessun deploy client EC2: il client verrà eseguito in locale
+        print("\n--- Deploy completato ---")
+        print("Dettagli di connessione:")
+        print(f"SSH Key: {key_pair_name_actual}.pem")
+        print(f"RDS Endpoint: {rds_endpoint}")
+        print(f"DB User: {DB_MASTER_USERNAME}")
+        print(f"DB Password: {DB_MASTER_PASSWORD}")
+        print(f"DB Name: {DB_NAME}")
+        print(f"\nServer EC2 Public IP: {server_public_ip}")
+        print(f"Server EC2 Private IP (per client nella stessa VPC): {server_private_ip}")
+        print(f"Client locale: usa il public IP del server EC2 per connetterti")
 
         # Salva la configurazione in un file JSON
         config = {
@@ -542,17 +722,18 @@ def main():
         with open("deploy_config.json", "w") as f:
             json.dump(config, f, indent=4)
         print("\nConfigurazione salvata in 'deploy_config.json'.")
-
-        print("\n--- Prossimi Passi ---")
-        print("1. Esegui il file update_github_secrets.py per aggiornare le credenziali per git actions.")
-        print("2. Esegui il file update_java_config_on_ec2.py per aggiornare le configurazioni Java.")
-        print("3. Connettiti al server EC2 con: ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
-        print("4. Se si esegue una push su GitHub, allora le git actions eseguiranno automaticamente la pull e il deploy dell'applicazione.")
+        print("\n==============================")
+        print("   GUIDA STEP-BY-STEP DEPLOY  ")
+        print("==============================")
+        print("1. Aggiorna i file di configurazione Java locali:")
+        print("   python scripts/infrastructure/update_java_config_on_ec2.py")
+        print("2. Effettua commit e push delle modifiche (lo script sopra lo fa automaticamente).")
+        print("==============================\n")
 
     except ClientError as e:
         print(f"Si è verificato un errore AWS: {e}")
     except Exception as e:
-        print(f"Si è verificato un errore inaspettato: {e}")
+        print(f"Si è verificato un errore inatteso: {e}")
 
 if __name__ == "__main__":
     main()

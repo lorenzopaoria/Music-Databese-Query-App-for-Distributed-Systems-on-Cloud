@@ -6,8 +6,7 @@ import requests
 import json
 import os
 import base64
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding
+from nacl import encoding, public
 from dotenv import load_dotenv
 
 def load_environment():
@@ -15,7 +14,8 @@ def load_environment():
     Carica le variabili d'ambiente dal file .env
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    env_file = os.path.join(script_dir, ".env")
+    project_root = os.path.dirname(os.path.dirname(script_dir))
+    env_file = os.path.join(project_root, ".env")
     
     if not os.path.exists(env_file):
         print(f"❌ File .env non trovato: {env_file}")
@@ -81,24 +81,21 @@ def get_public_key(owner, repo, token):
 
 def encrypt_secret(public_key, secret_value):
     """
-    Cripta il secret usando la chiave pubblica del repository
+    Cripta il secret usando la chiave pubblica del repository (formato GitHub/Sodium)
     """
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.primitives import hashes
-    
+    # Decodifica la chiave pubblica da base64
     public_key_bytes = base64.b64decode(public_key)
-    public_key_obj = serialization.load_der_public_key(public_key_bytes)
     
-    encrypted = public_key_obj.encrypt(
-        secret_value.encode('utf-8'),
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None
-        )
-    )
+    # Crea l'oggetto chiave pubblica usando PyNaCl
+    public_key_obj = public.PublicKey(public_key_bytes)
     
+    # Crea una SealedBox per la crittografia
+    sealed_box = public.SealedBox(public_key_obj)
+    
+    # Cripta il secret
+    encrypted = sealed_box.encrypt(secret_value.encode('utf-8'))
+    
+    # Ritorna il valore crittografato in base64
     return base64.b64encode(encrypted).decode('utf-8')
 
 def update_secret(owner, repo, token, secret_name, secret_value, key_id, public_key):
