@@ -1,0 +1,75 @@
+name: Deploy Docker Container on EC2
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 300s
+          script: |
+            # Naviga nella directory del progetto
+            cd /home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud
+            
+            # Effettua pull delle modifiche dal repository
+            echo "Effettuando pull del repository..."
+            git pull origin main
+            
+            # Ferma il container Docker esistente
+            echo "Fermando il container musicapp-server..."
+            docker stop musicapp-server || true
+            docker rm musicapp-server || true
+            
+            # Ricostruisce e avvia il container Docker
+            echo "Ricostruendo il container Docker..."
+            docker build -f Dockerfile.dockerfile -t musicapp-server .
+            
+            # Avvia il nuovo container
+            echo "Avviando il nuovo container..."
+            docker run -d \
+              --name musicapp-server \
+              -p 8080:8080 \
+              --restart unless-stopped \
+              musicapp-server
+            
+            # Verifica che il container sia in esecuzione
+            echo "Verifica del container in esecuzione..."
+            sleep 10
+            
+            # Controlla lo stato del container
+            if docker ps | grep -q "musicapp-server"; then
+              echo "Container musicapp-server è in esecuzione"
+              docker ps -a --filter "name=musicapp-server"
+            else
+              echo "Container musicapp-server NON è in esecuzione"
+              echo "Log del container:"
+              docker logs musicapp-server || echo "Nessun log disponibile"
+              exit 1
+            fi
+            
+            # Controlla la salute dell'applicazione
+            echo "Test di connettività all'applicazione..."
+            for i in {1..5}; do
+              if curl -f http://localhost:8080 &>/dev/null; then
+                echo "Applicazione risponde correttamente"
+                break
+              else
+                echo "Tentativo $i/5 - Applicazione non ancora pronta, attendo 10 secondi..."
+                sleep 10
+              fi
+            done
+            
+            echo "Deploy completato!"
