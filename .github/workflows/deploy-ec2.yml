@@ -50,10 +50,30 @@ jobs:
             git fetch origin
             git reset --hard origin/main
             
-            # Ferma il container Docker esistente
+            # Ferma tutti i container che usano la porta 8080
+            echo "Fermando tutti i container che usano la porta 8080..."
+            docker ps -q --filter "publish=8080" | xargs -r docker stop || true
+            docker ps -aq --filter "publish=8080" | xargs -r docker rm || true
+            
+            # Ferma il container specifico per nome (doppia sicurezza)
             echo "Fermando il container musicapp-server..."
             docker stop musicapp-server 2>/dev/null || true
             docker rm musicapp-server 2>/dev/null || true
+            
+            # Aspetta un momento per assicurarsi che le risorse siano liberate
+            echo "Attendendo la liberazione delle risorse..."
+            sleep 5
+            
+            # Verifica che la porta 8080 sia libera
+            echo "Verificando che la porta 8080 sia libera..."
+            if netstat -tulpn 2>/dev/null | grep :8080 || ss -tulpn 2>/dev/null | grep :8080; then
+              echo "Attenzione: la porta 8080 è ancora in uso"
+              # Forza la terminazione di processi sulla porta 8080
+              sudo fuser -k 8080/tcp 2>/dev/null || true
+              sleep 3
+            else
+              echo "Porta 8080 è libera"
+            fi
             
             # Pulisce le immagini Docker non utilizzate
             echo "Pulizia immagini Docker..."
@@ -65,11 +85,27 @@ jobs:
             
             # Avvia il nuovo container
             echo "Avviando il nuovo container..."
-            docker run -d \
+            
+            # Verifica ancora una volta che non ci siano conflitti di porta
+            if docker ps --filter "publish=8080" --format "table {{.Names}}" | grep -v NAMES | grep -q .; then
+              echo "Errore: rilevato container che usa ancora la porta 8080"
+              docker ps --filter "publish=8080"
+              exit 1
+            fi
+            
+            # Avvia il container con gestione errori migliorata
+            if ! docker run -d \
               --name musicapp-server \
               -p 8080:8080 \
               --restart unless-stopped \
-              musicapp-server
+              musicapp-server; then
+              echo "Errore nell'avvio del container"
+              echo "Verifica dei container in esecuzione:"
+              docker ps -a
+              echo "Verifica dell'uso della porta 8080:"
+              netstat -tulpn 2>/dev/null | grep :8080 || ss -tulpn 2>/dev/null | grep :8080 || echo "Nessun processo sulla porta 8080"
+              exit 1
+            fi
             
             # Verifica che il container sia in esecuzione
             echo "Verifica del container in esecuzione..."
