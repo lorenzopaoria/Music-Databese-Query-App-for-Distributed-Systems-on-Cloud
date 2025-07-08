@@ -3,8 +3,6 @@ name: Deploy Docker Container on EC2
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
 
 jobs:
   deploy:
@@ -13,25 +11,53 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Validate EC2 connection
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60s
+          script: |
+            echo "Connessione EC2 stabilita con successo"
+            whoami
+            pwd
+            docker --version || echo "Docker non installato"
+
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 300s
+          timeout: 600s
+          command_timeout: 30m
           script: |
+            set -e
+            
+            # Verifica e crea la directory del progetto se non esiste
+            if [ ! -d "/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud" ]; then
+              echo "Clonando il repository..."
+              cd /home/ec2-user
+              git clone https://github.com/YOUR_USERNAME/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git
+            fi
+            
             # Naviga nella directory del progetto
             cd /home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud
             
             # Effettua pull delle modifiche dal repository
             echo "Effettuando pull del repository..."
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
             
             # Ferma il container Docker esistente
             echo "Fermando il container musicapp-server..."
-            docker stop musicapp-server || true
-            docker rm musicapp-server || true
+            docker stop musicapp-server 2>/dev/null || true
+            docker rm musicapp-server 2>/dev/null || true
+            
+            # Pulisce le immagini Docker non utilizzate
+            echo "Pulizia immagini Docker..."
+            docker system prune -f
             
             # Ricostruisce e avvia il container Docker
             echo "Ricostruendo il container Docker..."
@@ -47,7 +73,7 @@ jobs:
             
             # Verifica che il container sia in esecuzione
             echo "Verifica del container in esecuzione..."
-            sleep 10
+            sleep 15
             
             # Controlla lo stato del container
             if docker ps | grep -q "musicapp-server"; then
@@ -56,19 +82,25 @@ jobs:
             else
               echo "Container musicapp-server NON è in esecuzione"
               echo "Log del container:"
-              docker logs musicapp-server || echo "Nessun log disponibile"
+              docker logs musicapp-server 2>/dev/null || echo "Nessun log disponibile"
               exit 1
             fi
             
             # Controlla la salute dell'applicazione
             echo "Test di connettività all'applicazione..."
-            for i in {1..5}; do
+            for i in {1..10}; do
               if curl -f http://localhost:8080 &>/dev/null; then
                 echo "Applicazione risponde correttamente"
                 break
               else
-                echo "Tentativo $i/5 - Applicazione non ancora pronta, attendo 10 secondi..."
+                echo "Tentativo $i/10 - Applicazione non ancora pronta, attendo 10 secondi..."
                 sleep 10
+              fi
+              if [ $i -eq 10 ]; then
+                echo "Applicazione non risponde dopo 10 tentativi"
+                echo "Log del container:"
+                docker logs musicapp-server
+                exit 1
               fi
             done
             
