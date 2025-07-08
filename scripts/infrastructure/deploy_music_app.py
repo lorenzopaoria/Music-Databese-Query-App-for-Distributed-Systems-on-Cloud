@@ -392,177 +392,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             conn_app.close()
 
 
-def get_account_id():
-    sts = boto3.client('sts')
-    return sts.get_caller_identity()['Account']
 
-def create_ec2_codedeploy_role(iam_client):
-    role_name = "MusicAppEC2CodeDeployRole"
-    assume_role_policy = {
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Effect": "Allow",
-            "Principal": {"Service": "ec2.amazonaws.com"},
-            "Action": "sts:AssumeRole"
-        }]
-    }
-    try:
-        role = iam_client.create_role(
-            RoleName=role_name,
-            AssumeRolePolicyDocument=json.dumps(assume_role_policy),
-            Description="Ruolo per EC2 per lavorare con CodeDeploy"
-        )
-        print(f"Ruolo IAM '{role_name}' creato.")
-    except ClientError as e:
-        if "EntityAlreadyExists" in str(e):
-            print(f"Ruolo IAM '{role_name}' già esistente.")
-            role = iam_client.get_role(RoleName=role_name)
-        else:
-            raise
-
-    # Associa la policy gestita per CodeDeploy
-    policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy"
-    try:
-        iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
-        print(f"Policy '{policy_arn}' associata a '{role_name}'.")
-    except ClientError as e:
-        if "EntityAlreadyExists" in str(e):
-            print(f"Policy già associata.")
-        else:
-            raise
-
-    return role['Role']['Arn']
-
-def create_codepipeline(pipeline_name, repo_owner, repo_name, branch, buildspec_path, appspec_path, region):
-    codepipeline = boto3.client('codepipeline', region_name=region)
-    codebuild = boto3.client('codebuild', region_name=region)
-    codedeploy = boto3.client('codedeploy', region_name=region)
-    s3 = boto3.client('s3', region_name=region)
-    account_id = get_account_id()
-    artifact_bucket = f"musicapp-codepipeline-artifacts-{account_id}"
-
-    # Crea bucket S3 se non esiste
-    try:
-        s3.head_bucket(Bucket=artifact_bucket)
-        print(f"Bucket S3 '{artifact_bucket}' già esistente.")
-    except ClientError:
-        if region == "us-east-1":
-            s3.create_bucket(Bucket=artifact_bucket)
-        else:
-            s3.create_bucket(
-                Bucket=artifact_bucket,
-                CreateBucketConfiguration={'LocationConstraint': region}
-            )
-        print(f"Bucket S3 '{artifact_bucket}' creato.")
-
-    # Crea progetto CodeBuild se non esiste
-    build_project_name = f"{pipeline_name}-build"
-    try:
-        codebuild.batch_get_projects(names=[build_project_name])['projects'][0]
-        print(f"Progetto CodeBuild '{build_project_name}' già esistente.")
-    except (IndexError, ClientError):
-        codebuild.create_project(
-            name=build_project_name,
-            source={
-                'type': 'GITHUB',
-                'location': f"https://github.com/{repo_owner}/{repo_name}.git",
-                'buildspec': buildspec_path
-            },
-            artifacts={'type': 'S3', 'location': artifact_bucket},
-            environment={
-                'type': 'LINUX_CONTAINER',
-                'image': 'aws/codebuild/standard:7.0',
-                'computeType': 'BUILD_GENERAL1_SMALL'
-            },
-            serviceRole=f"arn:aws:iam::{account_id}:role/service-role/AWSCodeBuildServiceRole"
-        )
-        print(f"Progetto CodeBuild '{build_project_name}' creato.")
-
-    # Crea applicazione CodeDeploy se non esiste
-    codedeploy_app_name = f"{pipeline_name}-codedeploy"
-    try:
-        codedeploy.get_application(applicationName=codedeploy_app_name)
-        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' già esistente.")
-    except ClientError:
-        codedeploy.create_application(applicationName=codedeploy_app_name, computePlatform='Server')
-        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' creata.")
-
-    # Crea pipeline CodePipeline
-    try:
-        codepipeline.get_pipeline(name=pipeline_name)
-        print(f"Pipeline '{pipeline_name}' già esistente.")
-    except ClientError:
-        pipeline = {
-            'pipeline': {
-                'name': pipeline_name,
-                'roleArn': f"arn:aws:iam::{account_id}:role/AWSCodePipelineServiceRole",
-                'artifactStore': {
-                    'type': 'S3',
-                    'location': artifact_bucket
-                },
-                'stages': [
-                    {
-                        'name': 'Source',
-                        'actions': [{
-                            'name': 'Source',
-                            'actionTypeId': {
-                                'category': 'Source',
-                                'owner': 'ThirdParty',
-                                'provider': 'GitHub',
-                                'version': '1'
-                            },
-                            'outputArtifacts': [{'name': 'SourceArtifact'}],
-                            'configuration': {
-                                'Owner': repo_owner,
-                                'Repo': repo_name,
-                                'Branch': branch,
-                                'OAuthToken': os.environ.get('GITHUB_TOKEN', 'INSERISCI_TOKEN_GITHUB')
-                            },
-                            'runOrder': 1
-                        }]
-                    },
-                    {
-                        'name': 'Build',
-                        'actions': [{
-                            'name': 'Build',
-                            'actionTypeId': {
-                                'category': 'Build',
-                                'owner': 'AWS',
-                                'provider': 'CodeBuild',
-                                'version': '1'
-                            },
-                            'inputArtifacts': [{'name': 'SourceArtifact'}],
-                            'outputArtifacts': [{'name': 'BuildArtifact'}],
-                            'configuration': {
-                                'ProjectName': build_project_name
-                            },
-                            'runOrder': 1
-                        }]
-                    },
-                    {
-                        'name': 'Deploy',
-                        'actions': [{
-                            'name': 'Deploy',
-                            'actionTypeId': {
-                                'category': 'Deploy',
-                                'owner': 'AWS',
-                                'provider': 'CodeDeploy',
-                                'version': '1'
-                            },
-                            'inputArtifacts': [{'name': 'BuildArtifact'}],
-                            'configuration': {
-                                'ApplicationName': codedeploy_app_name,
-                                'DeploymentGroupName': 'MusicAppDeploymentGroup'
-                            },
-                            'runOrder': 1
-                        }]
-                    }
-                ],
-                'version': 1
-            }
-        }
-        codepipeline.create_pipeline(**pipeline)
-        print(f"Pipeline '{pipeline_name}' creata.")
 
 # --- Logica principale di deploy ---
 def main():
@@ -728,49 +558,60 @@ def main():
             json.dump(config, f, indent=4)
         print("\nConfigurazione salvata in 'deploy_config.json'.")
 
-        # --- IAM ROLE E PIPELINE ---
-        iam_client = boto3.client('iam', region_name=REGION)
+        # Carica il file di configurazione sull'EC2
         try:
-            create_ec2_codedeploy_role(iam_client)
-        except ClientError as e:
-            print(f"ATTENZIONE: impossibile creare o aggiornare il ruolo IAM per EC2/CodeDeploy. "
-                  f"Motivo: {e}\n"
-                  "Se il ruolo esiste già o non hai i permessi, puoi ignorare questo messaggio.")
-
-        # Ottieni owner e repo da .env
-        repo_env = os.getenv('REPO', 'lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud')
-        repo_owner, repo_name = repo_env.split('/', 1)
-
-        try:
-            create_codepipeline(
-                pipeline_name="MusicAppPipeline",
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                branch="main",
-                buildspec_path="scripts/infrastructure/buildspec.yml",
-                appspec_path="scripts/infrastructure/appspec.yml",
-                region=REGION
-            )
-            print("Pipeline creata (o già esistente).")
-        except ClientError as e:
-            print(f"ATTENZIONE: impossibile creare o aggiornare la CodePipeline. "
-                  f"Motivo: {e}\n"
-                  "Controlla i permessi o crea la pipeline manualmente dalla console AWS.")
+            print("Caricamento del file di configurazione sull'EC2...")
+            import paramiko
+            import time
+            
+            # Connessione SSH
+            key = paramiko.RSAKey.from_private_key_file(f"{key_pair_name_actual}.pem")
+            ssh_client = paramiko.SSHClient()
+            ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # Retry della connessione SSH
+            for i in range(5):
+                try:
+                    ssh_client.connect(hostname=server_public_ip, username='ec2-user', pkey=key, timeout=60)
+                    print(f"Connessione SSH stabilita verso {server_public_ip}")
+                    break
+                except Exception as e:
+                    print(f"Tentativo {i+1}/5 di connessione SSH fallito: {e}")
+                    if i == 4:
+                        raise
+                    time.sleep(30)
+            
+            # Trasferimento del file
+            sftp = ssh_client.open_sftp()
+            sftp.put("deploy_config.json", "/home/ec2-user/deploy_config.json")
+            sftp.close()
+            
+            # Verifica che il file sia stato caricato
+            stdin, stdout, stderr = ssh_client.exec_command("ls -la /home/ec2-user/deploy_config.json")
+            result = stdout.read().decode()
+            if result:
+                print(f"✅ File deploy_config.json caricato con successo sull'EC2")
+            else:
+                print("❌ Errore nel caricamento del file di configurazione")
+            
+            ssh_client.close()
+            
+        except Exception as e:
+            print(f"⚠️  Attenzione: Errore nel caricamento del file di configurazione sull'EC2: {e}")
+            print("Il deploy dell'applicazione potrebbe non funzionare correttamente.")
+            print("Puoi caricare manualmente il file con:")
+            print(f"scp -i {key_pair_name_actual}.pem deploy_config.json ec2-user@{server_public_ip}:/home/ec2-user/")
 
         print("\n==============================")
-        print("   GUIDA STEP-BY-STEP DEPLOY  ")
+        print("   DEPLOY COMPLETATO - DOCKER  ")
         print("==============================")
-        print("1. Aggiorna i file di configurazione Java locali:")
-        print("   python scripts/infrastructure/update_java_config_on_ec2.py")
-        print("2. Effettua commit e push delle modifiche (lo script sopra lo fa automaticamente).")
-        print("3. Attendi che la AWS CodePipeline completi tutti gli step (Source, Build, Deploy).")
-        print("   Puoi monitorare lo stato dalla Console AWS -> CodePipeline.")
-        print("4. Quando la pipeline è verde, collega il client o il browser all'applicazione:")
-        print("   vai nella cartella mvnProject-Client ed esegui con mvn -Pclient exec:java")
-        print("5. Per collegarti in SSH al server EC2:")
-        print("   ssh -i my-ec2-key.pem ec2-user@<server_public_ip>")
-        print("6. Per vedere i log dell'applicazione:")
-        print("   tail -f /home/ec2-user/musicapp/app.log")
+        print("La GitHub Action si occuperà automaticamente di:")
+        print("1. Build dell'immagine Docker")
+        print("2. Push su DockerHub o registry")
+        print("3. Deploy e restart del container su EC2")
+        print("4. Per accedere all'app: http://" + server_public_ip + ":8080")
+        print("5. Per SSH: ssh -i " + key_pair_name_actual + ".pem ec2-user@" + server_public_ip)
+        print("6. Per vedere i log del container: docker logs musicapp-server")
         print("==============================\n")
 
     except ClientError as e:
