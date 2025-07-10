@@ -1,22 +1,21 @@
 #!/bin/bash
 sudo dnf update -y
-# Install necessary tools: Java, Git, Maven, and Docker
+# installa Java 17, Git, Maven, Docker e Ruby
 sudo dnf install -y java-17-amazon-corretto-devel git maven docker
+sudo dnf install -y ruby
 sudo systemctl enable docker
 sudo systemctl start docker
 sudo usermod -aG docker ec2-user
-newgrp docker # Apply group changes immediately
+newgrp docker
 
-# Define the project directory
+# definisco working directory
 APP_DIR="/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud"
 
-# Clone the Git repository
+# clono il repository GitHub e imposto i permessi
 git clone https://github.com/lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git $APP_DIR
 sudo chown -R ec2-user:ec2-user $APP_DIR
 
-# --- Dockerization Steps ---
-
-# Create the Dockerfile inside the cloned repository
+# creo il file Dockerfile per il progetto server
 cat <<EOF > $APP_DIR/Dockerfile
 # Use an official Maven image with Java 17 as the base image
 FROM maven:3.9-eclipse-temurin-17
@@ -42,24 +41,15 @@ EOF
 
 echo "Dockerfile created successfully in $APP_DIR"
 
-# Build the Docker image from the Dockerfile
+# build della Docker image
 echo "Building the Docker image..."
 cd $APP_DIR
 docker build -t music-server-app .
 
-# Run the Docker container
+# run del container Docker
 echo "Running the Docker container..."
 docker run -d -p 8080:8080 --name musicapp-server music-server-app
 
 echo "Docker container 'music-server-container' is running."
-
-# --- CodeDeploy Agent Installation ---
-cd /home/ec2-user
-sudo dnf install -y ruby
-wget https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install
-chmod +x ./install
-sudo ./install auto
-sudo systemctl start codedeploy-agent
-sudo systemctl enable codedeploy-agent
 
 echo "User data script finished execution on $(date)" | tee /var/log/cloud-init-output.log

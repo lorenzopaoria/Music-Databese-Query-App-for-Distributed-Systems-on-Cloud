@@ -51,7 +51,7 @@ def git_commit_and_push():
     project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
     subprocess.run(["git", "add", "."], cwd=project_root, check=True)
     try:
-        subprocess.run(["git", "commit", "-m", "update_java_cofig_on_ec2 commit"], cwd=project_root, check=True)
+        subprocess.run(["git", "commit", "-m", "update_java_cofig_on_ec2 commit, action in corso..."], cwd=project_root, check=True)
         subprocess.run(["git", "push"], cwd=project_root, check=True)
         print("[SUCCESS] Modifiche locali committate e pushate sul repository remoto.")
     except subprocess.CalledProcessError as e:
