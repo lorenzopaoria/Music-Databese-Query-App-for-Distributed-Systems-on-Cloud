@@ -150,7 +150,6 @@ public class DatabaseClient {
                     // Se il server non restituisce il ruolo, potresti doverlo recuperare in altro modo o usarne uno predefinito
                     // Per questo esempio, se non c'è il ruolo, assumiamo che l'utente sia un 'premium' per la logica dei permessi
                     // In una vera applicazione, il ruolo dovrebbe essere confermato dal server.
-                    System.out.println("Warning: User role not provided by server. Assuming 'premium' for client-side permission checks.");
                     userRole = "premium"; // Default o richiedi all'utente
                 }
                 interactiveUser.role = userRole; // Aggiorna il ruolo dell'oggetto UserTest
