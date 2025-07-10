@@ -24,7 +24,7 @@ def run_remote_command(ssh_client, command, cwd=None):
         if build_result:
             print(f"[INFO] Risultato Maven: {build_result}")
         else:
-            print("[INFO] Risultato Maven: Sconosciuto (nessun BUILD SUCCESS/FAILURE trovato)")
+            print("[INFO] Risultato Maven: Sconosciuto - nessun BUILD SUCCESS/FAILURE trovato")
     else:
         if output:
             print(f"[STDOUT]\n{output}")
@@ -32,7 +32,7 @@ def run_remote_command(ssh_client, command, cwd=None):
             print(f"[STDERR]\n{error}")
 
     if exit_status != 0:
-        print(f"[ERRORE] Comando fallito con stato di uscita {exit_status}")
+        print(f"[ERROR] Comando fallito con stato di uscita {exit_status}")
         raise Exception(f"Comando '{full_command}' fallito sull'host remoto.")
     return output
 

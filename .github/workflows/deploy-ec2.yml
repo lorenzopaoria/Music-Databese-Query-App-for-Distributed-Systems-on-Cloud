@@ -150,5 +150,7 @@ jobs:
                 exit 1
               fi
             done
+
+            aws sns publish --region us-east-1 --topic-arn $(aws sns list-topics --region us-east-1 --query "Topics[?contains(TopicArn, 'musicapp-deployment-complete')].TopicArn" --output text) --subject "MusicApp Deployment" --message "Il deployment del container MusicApp è stato completato con successo tramite git action."
             
             echo "Deploy completato!"

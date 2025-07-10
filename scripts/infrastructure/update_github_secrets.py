@@ -12,14 +12,14 @@ def load_environment():
     env_file = os.path.join(project_root, ".env")
     
     if not os.path.exists(env_file):
-        print(f"[ERRORE] File .env non trovato: {env_file}")
+        print(f"[ERROR] File .env non trovato: {env_file}")
         return None
     
     load_dotenv(env_file)
     github_token = os.getenv('GITHUB_TOKEN')
     
     if not github_token:
-        print("[ERRORE] Variabile GITHUB_TOKEN non trovata nel file .env")
+        print("[ERROR] Variabile GITHUB_TOKEN non trovata nel file .env")
         return None
     
     return github_token
@@ -47,7 +47,7 @@ def get_repo_info():
             raise ValueError("Non è un repository GitHub")
             
     except Exception as e:
-        print(f"[ERRORE] Impossibile determinare il repository: {e}")
+        print(f"[ERROR] Impossibile determinare il repository: {e}")
         return None, None
 
 def get_public_key(owner, repo, token):
@@ -63,7 +63,7 @@ def get_public_key(owner, repo, token):
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"[ERRORE] Impossibile ottenere la chiave pubblica dal repository (status {response.status_code})")
+        print(f"[ERROR] Impossibile ottenere la chiave pubblica dal repository - status {response.status_code}")
         print(response.text)
         return None
 
@@ -105,7 +105,7 @@ def update_secret(owner, repo, token, secret_name, secret_value, key_id, public_
         print(f"[SUCCESS] Secret '{secret_name}' aggiornato correttamente.")
         return True
     else:
-        print(f"[ERRORE] Aggiornamento del secret '{secret_name}' fallito (status {response.status_code})")
+        print(f"[ERROR] Aggiornamento del secret '{secret_name}' fallito - status {response.status_code}")
         print(response.text)
         return False
 
@@ -121,7 +121,7 @@ def main():
     # ottieni owner e repo dal repository Git
     owner, repo = get_repo_info()
     if not owner or not repo:
-        print("[ERRORE] Impossibile determinare owner e repository.")
+        print("[ERROR] Impossibile determinare owner e repository.")
         return
     
     print(f"[INFO] Repository selezionato: {owner}/{repo}")
@@ -130,11 +130,11 @@ def main():
     pem_file = os.path.join(script_dir, "my-ec2-key.pem")
     
     if not os.path.exists(config_file):
-        print(f"[ERRORE] File di configurazione non trovato: {config_file}")
+        print(f"[ERROR] File di configurazione non trovato: {config_file}")
         return
     
     if not os.path.exists(pem_file):
-        print(f"[ERRORE] File PEM non trovato: {pem_file}")
+        print(f"[ERROR] File PEM non trovato: {pem_file}")
         return
     
     with open(config_file, 'r') as f:
@@ -169,7 +169,7 @@ def main():
         print("[SUCCESS] Tutti i secrets sono stati aggiornati correttamente!")
         print("[INFO] Ora puoi procedere con il push per triggerare il deploy!")
     else:
-        print("[ERRORE] Alcuni secrets non sono stati aggiornati correttamente.")
+        print("[ERROR] Alcuni secrets non sono stati aggiornati correttamente.")
 
 if __name__ == "__main__":
     main()
