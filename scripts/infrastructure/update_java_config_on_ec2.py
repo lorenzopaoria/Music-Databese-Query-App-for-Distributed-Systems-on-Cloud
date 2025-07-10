@@ -144,9 +144,9 @@ def main():
     DB_USERNAME = config["db_username"]
     DB_PASSWORD = config["db_password"]
     
-    # configurazione client: usa ALB se disponibile, altrimenti IP EC2
-    CLIENT_TARGET_HOST = config.get("alb_dns_name", SERVER_EC2_PUBLIC_IP)
-    CLIENT_TARGET_PORT = config.get("alb_port", "8080")
+    # configurazione client: usa NLB se disponibile, altrimenti IP EC2
+    CLIENT_TARGET_HOST = config.get("nlb_dns_name", SERVER_EC2_PUBLIC_IP)
+    CLIENT_TARGET_PORT = config.get("nlb_port", "8080")
 
     print("[STEP] Avvio del processo di aggiornamento della configurazione...")
 
