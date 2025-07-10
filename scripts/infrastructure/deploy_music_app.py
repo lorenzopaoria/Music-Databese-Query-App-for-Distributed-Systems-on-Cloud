@@ -5,13 +5,13 @@ import psycopg2
 import json
 from botocore.exceptions import ClientError
 
-# --- Configurazione AWS ---
+# configurazione AWS
 REGION = 'us-east-1'
 KEY_PAIR_NAME = 'my-ec2-key'
 AMI_ID = 'ami-09e6f87a47903347c'
 INSTANCE_TYPE = 't2.micro'
 
-# --- Configurazione Database RDS ---
+# configurazione Database RDS
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
 DB_ENGINE = 'postgres'
 DB_ENGINE_VERSION = '17.4'
@@ -21,7 +21,6 @@ DB_MASTER_USERNAME = 'dbadmin'
 DB_MASTER_PASSWORD = '12345678'
 DB_NAME = 'musicdb'
 
-# --- Funzioni di supporto ---
 def get_key_pair(ec2_client, key_name):
 
     try:
@@ -43,12 +42,12 @@ def get_key_pair(ec2_client, key_name):
 def create_vpc_and_security_groups(ec2_client, rds_client):
 
     print("[STEP] Verifica o creazione di VPC e Security Groups in corso...")
-    # Ottieni la VPC di default
+    # VPC di default
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     print(f"[INFO] VPC di default individuata: {vpc_id}")
 
-    # Crea Security Group per RDS
+    # creazione Security Group per RDS
     try:
         rds_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppRDSSecurityGroup',
@@ -66,7 +65,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # Crea Security Group per EC2
+    # creazione Security Group per EC2
     try:
         ec2_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppEC2SecurityGroup',
@@ -84,7 +83,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # Autorizza ingresso per SG RDS (da EC2 SG)
+    # autorizzazioni per SG RDS (da EC2 SG)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=rds_security_group_id,
@@ -104,7 +103,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # Autorizza ingresso per SG RDS da macchina locale (solo per inizializzazione DB, sviluppo)
+    # autorizzazioni per SG RDS da macchina locale (solo per inizializzazione DB, sviluppo)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=rds_security_group_id,
@@ -124,7 +123,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
             
-    # Autorizza ingresso per EC2 (SSH e porta app)
+    # autorizzazioni per EC2 (SSH e porta app)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=ec2_security_group_id,
@@ -137,7 +136,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
                 },
                 {
                     'IpProtocol': 'tcp',
-                    'FromPort': 8080, # Porta applicazione
+                    'FromPort': 8080, # porta app
                     'ToPort': 8080,
                     'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
                 }
@@ -156,7 +155,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
 
     print("[STEP] Avvio della procedura di pulizia delle risorse AWS...")
 
-    # Termina le istanze EC2
+    # termino EC2
     print("[STEP] Terminazione delle istanze EC2 in corso...")
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values': ['MusicApp']}]
@@ -175,7 +174,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     else:
         print("[INFO] Nessuna istanza EC2 'MusicApp' trovata da terminare.")
 
-    # Elimina istanza RDS
+    # elimino RDS
     print(f"[STEP] Eliminazione dell'istanza RDS '{rds_id}' in corso...")
     try:
         rds_client.delete_db_instance(
@@ -192,12 +191,11 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
         else:
             print(f"[ERRORE] durante l'eliminazione dell'istanza RDS: {e}")
 
-    # Elimina Security Groups
+    # elimino SG
     print("Eliminazione dei Security Groups...")
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     
-    # Prova a eliminare i SG in un ordine che riduca le dipendenze
     sg_to_delete = []
     try:
         rds_sg_id = ec2_client.describe_security_groups(
@@ -215,7 +213,6 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     except ClientError as e:
         if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
 
-    # Prova a revocare tutte le regole di ingresso prima di eliminare i SG
     for sg_id in sg_to_delete:
         try:
             sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
@@ -229,7 +226,6 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             if 'InvalidPermission.NotFound' not in str(e):
                 print(f"Attenzione: impossibile revocare regole di ingresso per {sg_id}: {e}")
 
-    # Ora elimina i SG
     for sg_name_current in [rds_sg_name, ec2_sg_name]:
         try:
             sg_id_current = ec2_client.describe_security_groups(
@@ -245,7 +241,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             else:
                 print(f"Errore durante l'eliminazione del Security Group '{sg_name_current}': {e}")
     
-    # Elimina Key Pair
+    # elimino Key Pair
     print(f"Eliminazione della Key Pair '{key_name}'...")
     try:
         ec2_client.delete_key_pair(KeyName=key_name)
@@ -279,15 +275,14 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
 def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_sql, data_sql):
     print(f"\nInizializzazione del database '{db_name}' su {rds_endpoint}...")
 
-    # Connessione al database "postgres" (database di default) per operazioni di drop/create
+    # connessione al database postgres
     conn_str_master = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
     conn = None
     try:
-        # Prova a connetterti con tentativi multipli per dare tempo all'RDS di avviarsi
         for i in range(5):
             try:
                 conn = psycopg2.connect(conn_str_master)
-                conn.autocommit = True # Permette DDL come DROP DATABASE
+                conn.autocommit = True
                 print("Connesso al database 'postgres' per la gestione.")
                 break
             except psycopg2.OperationalError as e:
@@ -298,7 +293,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
 
         cur = conn.cursor()
 
-        # 1. Termina tutte le connessioni al database target
+        # 1. termina tutte le connessioni al database
         print(f"Terminazione delle connessioni attive al database '{db_name}'...")
         try:
             cur.execute(f"""
@@ -311,24 +306,24 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         except Exception as e:
             print(f"Attenzione: errore nella terminazione delle connessioni (potrebbe non esistere o mancare permessi): {e}")
 
-        # 2. Elimina il database esistente (se esiste)
+        # 2. elimino il database esistente (se esiste)
         print(f"Tentativo di eliminazione del database '{db_name}' (se esiste)...")
         try:
             cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
             print(f"Database '{db_name}' eliminato (o non esisteva).")
         except Exception as e:
             print(f"Errore nell'eliminazione del database '{db_name}': {e}")
-            raise # Rilancia errore se impossibile eliminare DB
+            raise
 
-        # 3. Crea il database
+        # 3. creo il database
         print(f"Creazione del database '{db_name}'...")
         cur.execute(f"CREATE DATABASE {db_name};")
         print(f"Database '{db_name}' creato.")
 
         cur.close()
-        conn.close() # Chiudi connessione al database master
+        conn.close()
 
-        # Connettiti al nuovo database per inizializzazione schema e dati
+        # connetto al database per inizializzazione schema e dati
         conn_str_app = f"dbname={db_name} user={db_username} password={db_password} host={rds_endpoint} port=5432"
         conn_app = None
         for i in range(5):
@@ -342,10 +337,10 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         if conn_app is None:
             raise Exception("Impossibile connettersi al database applicativo.")
 
-        conn_app.autocommit = True # Per eseguire più statement DDL/DML senza commit esplicito
+        conn_app.autocommit = True
         cur_app = conn_app.cursor()
 
-        # Esegui schema.sql
+        # schema.sql
         print("Esecuzione di schema.sql...")
         try:
             cur_app.execute(schema_sql)
@@ -354,7 +349,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             print(f"Errore nell'esecuzione dello schema SQL: {e}")
             raise
 
-        # Esegui data.sql
+        # data.sql
         print("Esecuzione di data.sql...")
         try:
             cur_app.execute(data_sql)
@@ -369,7 +364,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
 
     except psycopg2.Error as e:
         print(f"Errore durante l'inizializzazione del database: {e}")
-        raise # Rilancia errore per fermare lo script principale
+        raise
     except Exception as e:
         print(f"Si è verificato un errore inatteso durante l'inizializzazione del database: {e}")
         raise
@@ -389,10 +384,8 @@ def main():
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
         if "--nords" in os.sys.argv:
-            # Elimina tutto tranne il database RDS
+            # elimino tutto tranne il database RDS
             print("[INFO] Opzione --nords attiva: elimino tutte le risorse tranne il database RDS.")
-            # Elimina EC2, Security Groups, Key Pair ma NON il database RDS
-            # Modifica delete_resources per saltare la parte RDS
             def delete_resources_no_rds(ec2_client, key_name, rds_sg_name, ec2_sg_name):
                 print("[STEP] Avvio della procedura di pulizia delle risorse AWS (NO RDS)...")
                 # Termina le istanze EC2
@@ -414,7 +407,6 @@ def main():
                 else:
                     print("[INFO] Nessuna istanza EC2 'MusicApp' trovata da terminare.")
 
-                # Elimina Security Groups
                 print("Eliminazione dei Security Groups...")
                 vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
                 vpc_id = vpcs['Vpcs'][0]['VpcId']
@@ -460,7 +452,6 @@ def main():
                         else:
                             print(f"Errore durante l'eliminazione del Security Group '{sg_name_current}': {e}")
 
-                # Elimina Key Pair
                 print(f"Eliminazione della Key Pair '{key_name}'...")
                 try:
                     ec2_client.delete_key_pair(KeyName=key_name)
@@ -497,7 +488,6 @@ def main():
     ec2_client = boto3.client('ec2', region_name=REGION)
     rds_client = boto3.client('rds', region_name=REGION)
 
-    # --- LETTURA FILE SQL ---
     schema_sql_path = os.path.join(
         os.path.dirname(__file__),
         '..', '..', 'Database', 'postgreSQL', 'schema.sql'
@@ -512,17 +502,16 @@ def main():
         dati_sql_content = f.read()
 
     try:
-        # 1. Ottieni o crea la Key Pair
+        # 1. ottengo o creo la Key Pair
         key_pair_name_actual = get_key_pair(ec2_client, KEY_PAIR_NAME)
 
-        # 2. Crea VPC e Security Groups
+        # 2. creo VPC e SG
         vpc_id, rds_security_group_id, ec2_security_group_id = create_vpc_and_security_groups(ec2_client, rds_client)
 
-        # 3. Deploy istanza RDS
+        # 3. deploy istanza RDS
         print(f"\nTentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'...")
         rds_endpoint = None
         try:
-            # Prova a descrivere se già esiste ed è disponibile
             response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
             instance_status = response['DBInstances'][0]['DBInstanceStatus']
             rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
@@ -561,7 +550,7 @@ def main():
         if not rds_endpoint:
             raise Exception("Impossibile ottenere l'endpoint RDS.")
 
-        # 4. Inizializza il database con schema e dati
+        # 4. inizializzo il db con schema e dati
         print("Inizializzazione del database RDS con schema e dati...")
         initialize_database(
             rds_endpoint=rds_endpoint,
@@ -572,11 +561,11 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. Ottieni User Data Script
+        # 5. user_data_script
         with open('user_data_script.sh', 'r') as f:
             user_data_script = f.read()
 
-        # 6. Deploy istanza EC2 MusicAppServer (o usa esistente)
+        # 6. deploy istanza EC2 MusicAppServer (o usa esistente)
         server_public_ip = None
         server_private_ip = None
         server_instances_found = ec2_client.describe_instances(
@@ -624,7 +613,6 @@ def main():
         config = {
             "server_public_ip": server_public_ip,
             "server_private_ip": server_private_ip,
-            "client_public_ips": [],  # Nessun client EC2
             "rds_endpoint": rds_endpoint,
             "db_username": DB_MASTER_USERNAME,
             "db_password": DB_MASTER_PASSWORD,
@@ -651,7 +639,7 @@ def main():
         print("║    mvn clean install && mvn -Pclient exec:java    ║")
         print("║                                                  ║")
         print("║ Log del container Docker del server:              ║")
-        print(f"║    docker logs -f musicappserver                  ")
+        print(f"║    docker logs -f musicapp-server                  ")
         print("╚════════════════════════════════════════════════════╝\n")
 
     except ClientError as e:

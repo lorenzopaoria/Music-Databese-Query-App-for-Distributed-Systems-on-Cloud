@@ -66,7 +66,7 @@ def update_local_java_config(
     server_config_path, server_db_properties_path, client_config_path
 ):
 
-    # Aggiorna DatabaseConfig.java (solo valori di default nel blocco catch)
+    # aggiorno DatabaseConfig.java
     with open(server_config_path, "r") as f:
         content = f.read()
     content = re.sub(
@@ -97,7 +97,7 @@ def update_local_java_config(
     with open(server_config_path, "w") as f:
         f.write(content)
 
-    # Aggiorna database.properties
+    # aggiorno database.properties
     with open(server_db_properties_path, "r") as f:
         lines = f.readlines()
     with open(server_db_properties_path, "w") as f:
@@ -115,7 +115,7 @@ def update_local_java_config(
             else:
                 f.write(line)
 
-    # Aggiorna DatabaseClient.java
+    # aggiorno DatabaseClient.java
     with open(client_config_path, "r") as f:
         content = f.read()
     content = re.sub(

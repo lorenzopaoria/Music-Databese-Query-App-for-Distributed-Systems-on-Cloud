@@ -30,8 +30,7 @@ def get_repo_info():
         import subprocess
         result = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True, check=True)
         remote_url = result.stdout.strip()
-        
-        # Parsing dell'URL GitHub
+
         if 'github.com' in remote_url:
             if remote_url.endswith('.git'):
                 remote_url = remote_url[:-4]
@@ -114,12 +113,12 @@ def main():
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Carica il token GitHub
+    # carica il token GitHub dall'ambiente
     github_token = load_environment()
     if not github_token:
         return
     
-    # Determina owner e repository
+    # ottieni owner e repo dal repository Git
     owner, repo = get_repo_info()
     if not owner or not repo:
         print("[ERRORE] Impossibile determinare owner e repository.")
@@ -127,11 +126,9 @@ def main():
     
     print(f"[INFO] Repository selezionato: {owner}/{repo}")
     
-    # Percorsi dei file
     config_file = os.path.join(script_dir, "deploy_config.json")
     pem_file = os.path.join(script_dir, "my-ec2-key.pem")
     
-    # Verifica esistenza dei file
     if not os.path.exists(config_file):
         print(f"[ERRORE] File di configurazione non trovato: {config_file}")
         return
@@ -140,23 +137,19 @@ def main():
         print(f"[ERRORE] File PEM non trovato: {pem_file}")
         return
     
-    # Leggi la configurazione
     with open(config_file, 'r') as f:
         config = json.load(f)
     
-    # Leggi la chiave PEM
     with open(pem_file, 'r') as f:
         pem_content = f.read()
     
-    # Ottieni la chiave pubblica del repository
     public_key_info = get_public_key(owner, repo, github_token)
     if not public_key_info:
         return
     
-    # Aggiorna i secrets
     success = True
     
-    # Aggiorna EC2_HOST
+    # aggiorno EC2_HOST
     print(f"[STEP] Aggiornamento del secret EC2_HOST con valore: {config['server_public_ip']}")
     if not update_secret(owner, repo, github_token, "EC2_HOST", 
                         config['server_public_ip'], 
@@ -164,7 +157,7 @@ def main():
                         public_key_info['key']):
         success = False
     
-    # Aggiorna EC2_SSH_KEY
+    # aggiorno EC2_SSH_KEY
     print("[STEP] Aggiornamento del secret EC2_SSH_KEY in corso...")
     if not update_secret(owner, repo, github_token, "EC2_SSH_KEY", 
                         pem_content, 
