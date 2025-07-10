@@ -1,12 +1,33 @@
 #!/bin/bash
 sudo dnf update -y
-# installa Java 17, Git, Maven, Docker e Ruby
+# installa Java 17, Git, Maven, Docker, Ruby e AWS CLI
 sudo dnf install -y java-17-amazon-corretto-devel git maven docker
 sudo dnf install -y ruby
+sudo dnf install -y awscli
 sudo systemctl enable docker
 sudo systemctl start docker
 sudo usermod -aG docker ec2-user
 newgrp docker
+
+# configura AWS CLI per ec2-user
+sudo -u ec2-user mkdir -p /home/ec2-user/.aws
+sudo -u ec2-user cat <<EOF > /home/ec2-user/.aws/credentials
+[default]
+aws_access_key_id=AWS_ACCESS_KEY_ID_PLACEHOLDER
+aws_secret_access_key=AWS_SECRET_ACCESS_KEY_PLACEHOLDER
+aws_session_token=AWS_SESSION_TOKEN_PLACEHOLDER
+EOF
+
+sudo -u ec2-user cat <<EOF > /home/ec2-user/.aws/config
+[default]
+region = us-east-1
+output = json
+EOF
+
+# imposta i permessi corretti per i file AWS
+sudo chown -R ec2-user:ec2-user /home/ec2-user/.aws
+sudo chmod 600 /home/ec2-user/.aws/credentials
+sudo chmod 644 /home/ec2-user/.aws/config
 
 # definisco working directory
 APP_DIR="/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud"
@@ -54,5 +75,5 @@ echo "Docker container 'music-server-container' is running."
 
 echo "User data script finished execution on $(date)" | tee /var/log/cloud-init-output.log
 
-# notifica SNS di completamento setup del server
-aws sns publish --region us-east-1 --topic-arn $(aws sns list-topics --region us-east-1 --query "Topics[?contains(TopicArn, 'musicapp-server-setup-complete')].TopicArn" --output text) --subject "MusicApp Server Setup" --message "Il setup del server EC2 MusicApp è stato completato con successo."
+# notifica SNS di completamento setup del server (eseguito come ec2-user)
+sudo -u ec2-user aws sns publish --region us-east-1 --topic-arn $(sudo -u ec2-user aws sns list-topics --region us-east-1 --query "Topics[?contains(TopicArn, 'musicapp-server-setup-complete')].TopicArn" --output text) --subject "MusicApp Server Setup" --message "Il setup del server EC2 MusicApp è stato completato con successo."

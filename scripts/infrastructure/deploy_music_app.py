@@ -3,6 +3,7 @@ import time
 import os
 import psycopg2
 import json
+import configparser
 from botocore.exceptions import ClientError
 
 # configurazione AWS
@@ -20,6 +21,51 @@ DB_ALLOCATED_STORAGE = 20
 DB_MASTER_USERNAME = 'dbadmin'
 DB_MASTER_PASSWORD = '12345678'
 DB_NAME = 'musicdb'
+
+def read_aws_credentials():
+    """Legge le credenziali AWS dal file ~/.aws/credentials locale"""
+    credentials_path = os.path.expanduser('~/.aws/credentials')
+    if not os.path.exists(credentials_path):
+        raise Exception(f"File delle credenziali AWS non trovato: {credentials_path}")
+    
+    config = configparser.ConfigParser()
+    config.read(credentials_path)
+    
+    if 'default' not in config:
+        raise Exception("Sezione [default] non trovata nel file delle credenziali AWS")
+    
+    credentials = {
+        'aws_access_key_id': config['default'].get('aws_access_key_id'),
+        'aws_secret_access_key': config['default'].get('aws_secret_access_key'),
+        'aws_session_token': config['default'].get('aws_session_token')  # Può essere None
+    }
+    
+    if not credentials['aws_access_key_id'] or not credentials['aws_secret_access_key']:
+        raise Exception("Credenziali AWS incomplete nel file ~/.aws/credentials")
+    
+    print("[INFO] Credenziali AWS lette correttamente dal file locale")
+    return credentials
+
+def update_user_data_with_credentials(user_data_script, credentials):
+    """Sostituisce i placeholder nel user data script con le credenziali reali"""
+    updated_script = user_data_script.replace(
+        'AWS_ACCESS_KEY_ID_PLACEHOLDER', credentials['aws_access_key_id']
+    ).replace(
+        'AWS_SECRET_ACCESS_KEY_PLACEHOLDER', credentials['aws_secret_access_key']
+    )
+    
+    # Gestisce il session token (può essere None per credenziali permanenti)
+    if credentials['aws_session_token']:
+        updated_script = updated_script.replace(
+            'AWS_SESSION_TOKEN_PLACEHOLDER', credentials['aws_session_token']
+        )
+    else:
+        # Rimuove la riga del session token se non presente
+        lines = updated_script.split('\n')
+        updated_lines = [line for line in lines if 'AWS_SESSION_TOKEN_PLACEHOLDER' not in line]
+        updated_script = '\n'.join(updated_lines)
+    
+    return updated_script
 
 def get_key_pair(ec2_client, key_name):
 
@@ -537,6 +583,9 @@ def main():
         dati_sql_content = f.read()
 
     try:
+        # 0. Legge le credenziali AWS dal file locale
+        aws_credentials = read_aws_credentials()
+        
         # 1. ottengo o creo la Key Pair
         key_pair_name_actual = get_key_pair(ec2_client, KEY_PAIR_NAME)
 
@@ -600,10 +649,19 @@ def main():
         topic_name = 'musicapp-server-setup-complete'
         email_address = 'lorenzopaoria@icloud.com'
         topic_arn = setup_sns_notification(REGION, topic_name, email_address)
-        with open('user_data_script.sh', 'r') as f:
+        
+        # Legge il file user_data_script.sh
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_data_script_path = os.path.join(script_dir, 'user_data_script.sh')
+        with open(user_data_script_path, 'r') as f:
             user_data_script = f.read()
+        
+        # Sostituisce i placeholder delle credenziali AWS con quelle reali
+        user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
+        
+        # Aggiunge la notifica SNS alla fine dello script
         user_data_script += f"\n\n# Notifica SNS di completamento setup\n" \
-            f"aws sns publish --region {REGION} --topic-arn {topic_arn} --subject 'MusicApp Server Setup' --message 'Il setup del server EC2 MusicApp è stato completato con successo.'\n"
+            f"sudo -u ec2-user aws sns publish --region {REGION} --topic-arn {topic_arn} --subject 'MusicApp Server Setup' --message 'Il setup del server EC2 MusicApp è stato completato con successo.'\n"
 
         # 6. deploy istanza EC2 MusicAppServer (o usa esistente)
         server_public_ip = None
