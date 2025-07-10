@@ -395,7 +395,110 @@ def main():
     if "--clean" in os.sys.argv:
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
-        delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
+        if "--nords" in os.sys.argv:
+            # Elimina tutto tranne il database RDS
+            print("[INFO] Opzione --nords attiva: elimino tutte le risorse tranne il database RDS.")
+            # Elimina EC2, Security Groups, Key Pair ma NON il database RDS
+            # Modifica delete_resources per saltare la parte RDS
+            def delete_resources_no_rds(ec2_client, key_name, rds_sg_name, ec2_sg_name):
+                print("[STEP] Avvio della procedura di pulizia delle risorse AWS (NO RDS)...")
+                # Termina le istanze EC2
+                print("[STEP] Terminazione delle istanze EC2 in corso...")
+                instances = ec2_client.describe_instances(
+                    Filters=[{'Name': 'tag:Application', 'Values': ['MusicApp']}]
+                )
+                instance_ids = []
+                for reservation in instances['Reservations']:
+                    for instance in reservation['Instances']:
+                        if instance['State']['Name'] != 'terminated':
+                            instance_ids.append(instance['InstanceId'])
+                if instance_ids:
+                    ec2_client.terminate_instances(InstanceIds=instance_ids)
+                    print(f"[INFO] Istanze EC2 terminate: {instance_ids}. Attendo la conferma di terminazione...")
+                    waiter = ec2_client.get_waiter('instance_terminated')
+                    waiter.wait(InstanceIds=instance_ids)
+                    print("[SUCCESS] Tutte le istanze EC2 sono state terminate correttamente.")
+                else:
+                    print("[INFO] Nessuna istanza EC2 'MusicApp' trovata da terminare.")
+
+                # Elimina Security Groups
+                print("Eliminazione dei Security Groups...")
+                vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
+                vpc_id = vpcs['Vpcs'][0]['VpcId']
+                sg_to_delete = []
+                try:
+                    rds_sg_id = ec2_client.describe_security_groups(
+                        GroupNames=[rds_sg_name], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+                    )['SecurityGroups'][0]['GroupId']
+                    sg_to_delete.append(rds_sg_id)
+                except ClientError as e:
+                    if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
+                try:
+                    ec2_sg_id = ec2_client.describe_security_groups(
+                        GroupNames=[ec2_sg_name], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+                    )['SecurityGroups'][0]['GroupId']
+                    sg_to_delete.append(ec2_sg_id)
+                except ClientError as e:
+                    if "InvalidGroup.NotFound" not in str(e): print(f"Errore: {e}")
+                for sg_id in sg_to_delete:
+                    try:
+                        sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
+                        if 'IpPermissions' in sg_details and sg_details['IpPermissions']:
+                            ec2_client.revoke_security_group_ingress(
+                                GroupId=sg_id,
+                                IpPermissions=sg_details['IpPermissions']
+                            )
+                            print(f"Regole di ingresso revocate per SG {sg_id}.")
+                    except ClientError as e:
+                        if 'InvalidPermission.NotFound' not in str(e):
+                            print(f"Attenzione: impossibile revocare regole di ingresso per {sg_id}: {e}")
+                for sg_name_current in [rds_sg_name, ec2_sg_name]:
+                    try:
+                        sg_id_current = ec2_client.describe_security_groups(
+                            GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+                        )['SecurityGroups'][0]['GroupId']
+                        ec2_client.delete_security_group(GroupId=sg_id_current)
+                        print(f"Security Group '{sg_name_current}' ({sg_id_current}) eliminato.")
+                    except ClientError as e:
+                        if "InvalidGroup.NotFound" in str(e):
+                            print(f"Security Group '{sg_name_current}' non trovato o già eliminato.")
+                        elif "DependencyViolation" in str(e):
+                            print(f"Errore: Security Group '{sg_name_current}' ha ancora dipendenze. Riprova più tardi o elimina manualmente.")
+                        else:
+                            print(f"Errore durante l'eliminazione del Security Group '{sg_name_current}': {e}")
+
+                # Elimina Key Pair
+                print(f"Eliminazione della Key Pair '{key_name}'...")
+                try:
+                    ec2_client.delete_key_pair(KeyName=key_name)
+                    print(f"Key Pair '{key_name}' eliminata da AWS.")
+                    if os.path.exists(f"{key_name}.pem"):
+                        try:
+                            os.remove(f"{key_name}.pem")
+                            print(f"File locale '{key_name}.pem' eliminato.")
+                        except PermissionError:
+                            print(f"ATTENZIONE: impossibile eliminare il file locale '{key_name}.pem' per errore di permessi (potrebbe essere in uso). Elimina manualmente.")
+                        except Exception as file_e:
+                            print(f"ATTENZIONE: errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
+                except ClientError as e:
+                    if "InvalidKeyPair.NotFound" in str(e):
+                        print(f"Key Pair '{key_name}' non trovata o già eliminata in AWS.")
+                        if os.path.exists(f"{key_name}.pem"):
+                            try:
+                                os.remove(f"{key_name}.pem")
+                                print(f"File locale '{key_name}.pem' eliminato.")
+                            except PermissionError:
+                                print(f"ATTENZIONE: impossibile eliminare il file locale '{key_name}.pem' per errore di permessi (potrebbe essere in uso). Elimina manualmente.")
+                            except Exception as file_e:
+                                print(f"ATTENZIONE: errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
+                    else:
+                        print(f"Errore durante l'eliminazione della Key Pair in AWS: {e}")
+                        raise
+                print("Pulizia delle risorse AWS completata (NO RDS).")
+
+            delete_resources_no_rds(ec2, KEY_PAIR_NAME, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
+        else:
+            delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
         return
 
     ec2_client = boto3.client('ec2', region_name=REGION)
@@ -404,11 +507,11 @@ def main():
     # --- LETTURA FILE SQL ---
     schema_sql_path = os.path.join(
         os.path.dirname(__file__),
-        '..', '..', 'Database', 'Sql', 'schema.sql'
+        '..', '..', 'Database', 'postgreSQL', 'schema.sql'
     )
     dati_sql_path = os.path.join(
         os.path.dirname(__file__),
-        '..', '..', 'Database', 'Sql', 'dati.sql'
+        '..', '..', 'Database', 'postgreSQL', 'dati.sql'
     )
     with open(os.path.abspath(schema_sql_path), 'r', encoding='utf-8') as f:
         schema_sql_content = f.read()
