@@ -53,3 +53,6 @@ docker run -d -p 8080:8080 --name musicapp-server music-server-app
 echo "Docker container 'music-server-container' is running."
 
 echo "User data script finished execution on $(date)" | tee /var/log/cloud-init-output.log
+
+# Notifica SNS di completamento setup
+aws sns publish --region us-east-1 --topic-arn $(aws sns list-topics --region us-east-1 --query "Topics[?contains(TopicArn, 'musicapp-server-setup-complete')].TopicArn" --output text) --subject "MusicApp Server Setup" --message "Il setup del server EC2 MusicApp è stato completato con successo."

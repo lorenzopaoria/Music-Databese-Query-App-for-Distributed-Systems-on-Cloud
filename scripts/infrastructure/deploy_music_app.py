@@ -379,6 +379,28 @@ def get_account_id():
     sts = boto3.client('sts')
     return sts.get_caller_identity()['Account']
 
+def setup_sns_notification(region, topic_name, email_address):
+
+    sns_client = boto3.client('sns', region_name=region)
+    print("[STEP] Creazione SNS topic per notifica completamento setup server...")
+    topic_arn = None
+    try:
+        response = sns_client.create_topic(Name=topic_name)
+        topic_arn = response['TopicArn']
+        print(f"[OK] SNS topic creato: {topic_arn}")
+    except Exception as e:
+        print(f"[ERRORE] nella creazione del topic SNS: {e}")
+        raise
+
+    try:
+        sns_client.subscribe(TopicArn=topic_arn, Protocol='email', Endpoint=email_address)
+        print(f"[OK] Sottoscrizione email {email_address} al topic SNS completata.")
+        print(f"[INFO] Conferma la sottoscrizione tramite il link che riceverai via email.")
+    except Exception as e:
+        print(f"[ERRORE] nella sottoscrizione email SNS: {e}")
+        raise
+    return topic_arn
+
 def main():
     if "--clean" in os.sys.argv:
         ec2 = boto3.client('ec2', region_name=REGION)
@@ -561,9 +583,14 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. user_data_script
+        # 5. Setup SNS notification e modifica user_data_script
+        topic_name = 'musicapp-server-setup-complete'
+        email_address = 'lorenzopaoria@icloud.com'
+        topic_arn = setup_sns_notification(REGION, topic_name, email_address)
         with open('user_data_script.sh', 'r') as f:
             user_data_script = f.read()
+        user_data_script += f"\n\n# Notifica SNS di completamento setup\n" \
+            f"aws sns publish --region {REGION} --topic-arn {topic_arn} --subject 'MusicApp Server Setup' --message 'Il setup del server EC2 MusicApp è stato completato con successo.'\n"
 
         # 6. deploy istanza EC2 MusicAppServer (o usa esistente)
         server_public_ip = None
