@@ -143,6 +143,10 @@ def main():
     RDS_ENDPOINT = config["rds_endpoint"]
     DB_USERNAME = config["db_username"]
     DB_PASSWORD = config["db_password"]
+    
+    # configurazione client: usa ALB se disponibile, altrimenti IP EC2
+    CLIENT_TARGET_HOST = config.get("alb_dns_name", SERVER_EC2_PUBLIC_IP)
+    CLIENT_TARGET_PORT = config.get("alb_port", "8080")
 
     print("[STEP] Avvio del processo di aggiornamento della configurazione...")
 
@@ -159,8 +163,8 @@ def main():
         rds_endpoint=RDS_ENDPOINT,
         db_username=DB_USERNAME,
         db_password=DB_PASSWORD,
-        client_server_ip=SERVER_EC2_PUBLIC_IP,
-        client_server_port=SERVER_APPLICATION_PORT,
+        client_server_ip=CLIENT_TARGET_HOST,
+        client_server_port=CLIENT_TARGET_PORT,
         server_config_path=server_config_path,
         server_db_properties_path=server_db_properties_path,
         client_config_path=client_config_path

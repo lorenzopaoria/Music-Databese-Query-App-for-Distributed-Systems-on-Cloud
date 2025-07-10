@@ -22,6 +22,10 @@ DB_MASTER_USERNAME = 'dbadmin'
 DB_MASTER_PASSWORD = '12345678'
 DB_NAME = 'musicdb'
 
+# configurazione Load Balancer
+ALB_NAME = 'musicapp-alb'
+TARGET_GROUP_NAME = 'musicapp-tg'
+
 def read_aws_credentials():
     """Legge le credenziali AWS dal file ~/.aws/credentials locale"""
     credentials_path = os.path.expanduser('~/.aws/credentials')
@@ -86,6 +90,230 @@ def get_key_pair(ec2_client, key_name):
             return key_pair['KeyName']
         else:
             raise
+
+def create_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_id, ec2_security_group_id):
+
+    print("\n[SECTION] Application Load Balancer Setup")
+    print("-" * 50)
+    
+    # Ottieni le subnet pubbliche per l'ALB
+    subnets_response = ec2_client.describe_subnets(
+        Filters=[
+            {'Name': 'vpc-id', 'Values': [vpc_id]},
+            {'Name': 'map-public-ip-on-launch', 'Values': ['true']}
+        ]
+    )
+    subnet_ids = [subnet['SubnetId'] for subnet in subnets_response['Subnets']]
+    
+    if len(subnet_ids) < 2:
+        print("[WARNING] Meno di 2 subnet pubbliche disponibili. L'ALB richiede almeno 2 AZ.")
+        # Ottieni tutte le subnet se non ci sono abbastanza subnet pubbliche
+        subnets_response = ec2_client.describe_subnets(
+            Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+        )
+        subnet_ids = [subnet['SubnetId'] for subnet in subnets_response['Subnets']]
+    
+    # Prendi solo le prime 2 subnet per l'ALB
+    alb_subnet_ids = subnet_ids[:2]
+    print(f"[INFO] Subnet selezionate per ALB: {alb_subnet_ids}")
+
+    # Crea Security Group per ALB
+    try:
+        alb_sg_response = ec2_client.create_security_group(
+            GroupName='MusicAppALBSecurityGroup',
+            Description='Security Group per Application Load Balancer MusicApp',
+            VpcId=vpc_id
+        )
+        alb_security_group_id = alb_sg_response['GroupId']
+        print(f"[SUCCESS] Security Group per ALB creato: {alb_security_group_id}")
+    except ClientError as e:
+        if 'InvalidGroup.Duplicate' in str(e):
+            alb_security_group_id = ec2_client.describe_security_groups(
+                GroupNames=['MusicAppALBSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
+            )['SecurityGroups'][0]['GroupId']
+            print(f"[INFO] Security Group per ALB già esistente: {alb_security_group_id}")
+        else:
+            raise
+
+    # Configura regole Security Group per ALB (HTTP/HTTPS da internet)
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=alb_security_group_id,
+            IpPermissions=[
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 80,
+                    'ToPort': 80,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTP from anywhere'}]
+                },
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 443,
+                    'ToPort': 443,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS from anywhere'}]
+                }
+            ]
+        )
+        print("[SUCCESS] Regole ingresso configurate per ALB Security Group")
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            print("[INFO] Regole ingresso ALB già presenti")
+        else:
+            raise
+
+    # Aggiorna Security Group EC2 per accettare traffico solo dall'ALB
+    try:
+        # Rimuovi regola di accesso diretto alla porta 8080 da 0.0.0.0/0 se esiste
+        ec2_sg_rules = ec2_client.describe_security_groups(GroupIds=[ec2_security_group_id])
+        for rule in ec2_sg_rules['SecurityGroups'][0]['IpPermissions']:
+            if (rule.get('FromPort') == 8080 and rule.get('ToPort') == 8080 and 
+                rule.get('IpRanges') and any(ip.get('CidrIp') == '0.0.0.0/0' for ip in rule['IpRanges'])):
+                try:
+                    ec2_client.revoke_security_group_ingress(
+                        GroupId=ec2_security_group_id,
+                        IpPermissions=[rule]
+                    )
+                    print("[INFO] Rimossa regola di accesso diretto alla porta 8080 da 0.0.0.0/0")
+                except ClientError:
+                    pass
+    except ClientError:
+        pass
+
+    # Aggiungi regola per accettare traffico dall'ALB
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=ec2_security_group_id,
+            IpPermissions=[
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 8080,
+                    'ToPort': 8080,
+                    'UserIdGroupPairs': [{'GroupId': alb_security_group_id, 'Description': 'Traffic from ALB'}]
+                }
+            ]
+        )
+        print("[SUCCESS] Regola aggiunta per traffico ALB->EC2 sulla porta 8080")
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            print("[INFO] Regola ALB->EC2 già presente")
+        else:
+            raise
+
+    # Crea Target Group
+    try:
+        target_group_response = elbv2_client.create_target_group(
+            Name=TARGET_GROUP_NAME,
+            Protocol='HTTP',
+            Port=8080,
+            VpcId=vpc_id,
+            TargetType='instance',
+            HealthCheckProtocol='HTTP',
+            HealthCheckPath='/',
+            HealthCheckPort='8080',
+            HealthCheckIntervalSeconds=30,
+            HealthCheckTimeoutSeconds=5,
+            HealthyThresholdCount=2,
+            UnhealthyThresholdCount=3,
+            Tags=[
+                {'Key': 'Name', 'Value': TARGET_GROUP_NAME},
+                {'Key': 'Application', 'Value': 'MusicApp'}
+            ]
+        )
+        target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
+        print(f"[SUCCESS] Target Group creato: {target_group_arn}")
+    except ClientError as e:
+        if 'DuplicateTargetGroupName' in str(e):
+            target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
+            target_group_arn = target_groups['TargetGroups'][0]['TargetGroupArn']
+            print(f"[INFO] Target Group già esistente: {target_group_arn}")
+        else:
+            raise
+
+    # Crea Application Load Balancer
+    try:
+        alb_response = elbv2_client.create_load_balancer(
+            Name=ALB_NAME,
+            Subnets=alb_subnet_ids,
+            SecurityGroups=[alb_security_group_id],
+            Scheme='internet-facing',
+            Type='application',
+            IpAddressType='ipv4',
+            Tags=[
+                {'Key': 'Name', 'Value': ALB_NAME},
+                {'Key': 'Application', 'Value': 'MusicApp'}
+            ]
+        )
+        alb_arn = alb_response['LoadBalancers'][0]['LoadBalancerArn']
+        alb_dns_name = alb_response['LoadBalancers'][0]['DNSName']
+        print(f"[SUCCESS] Application Load Balancer creato: {alb_arn}")
+        print(f"[INFO] ALB DNS Name: {alb_dns_name}")
+    except ClientError as e:
+        if 'DuplicateLoadBalancerName' in str(e):
+            albs = elbv2_client.describe_load_balancers(Names=[ALB_NAME])
+            alb_arn = albs['LoadBalancers'][0]['LoadBalancerArn']
+            alb_dns_name = albs['LoadBalancers'][0]['DNSName']
+            print(f"[INFO] Application Load Balancer già esistente: {alb_arn}")
+            print(f"[INFO] ALB DNS Name: {alb_dns_name}")
+        else:
+            raise
+
+    # Attendi che l'ALB sia attivo
+    print("[INFO] Attesa che l'ALB diventi attivo...")
+    waiter = elbv2_client.get_waiter('load_balancer_available')
+    waiter.wait(LoadBalancerArns=[alb_arn])
+    print("[SUCCESS] ALB è ora attivo")
+
+    # Crea Listener per l'ALB
+    try:
+        listener_response = elbv2_client.create_listener(
+            LoadBalancerArn=alb_arn,
+            Protocol='HTTP',
+            Port=80,
+            DefaultActions=[
+                {
+                    'Type': 'forward',
+                    'TargetGroupArn': target_group_arn
+                }
+            ]
+        )
+        listener_arn = listener_response['Listeners'][0]['ListenerArn']
+        print(f"[SUCCESS] Listener creato: {listener_arn}")
+    except ClientError as e:
+        if 'DuplicateListener' in str(e):
+            listeners = elbv2_client.describe_listeners(LoadBalancerArn=alb_arn)
+            listener_arn = listeners['Listeners'][0]['ListenerArn']
+            print(f"[INFO] Listener già esistente: {listener_arn}")
+        else:
+            raise
+
+    return alb_arn, alb_dns_name, target_group_arn, alb_security_group_id
+
+def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
+    """Registra l'istanza EC2 nel Target Group"""
+    print(f"\n[STEP] Registrazione istanza {instance_id} nel Target Group...")
+    try:
+        elbv2_client.register_targets(
+            TargetGroupArn=target_group_arn,
+            Targets=[
+                {
+                    'Id': instance_id,
+                    'Port': 8080
+                }
+            ]
+        )
+        print(f"[SUCCESS] Istanza {instance_id} registrata nel Target Group")
+        
+        # Attendi che il target diventi healthy
+        print("[INFO] Attesa che il target diventi healthy...")
+        waiter = elbv2_client.get_waiter('target_in_service')
+        waiter.wait(
+            TargetGroupArn=target_group_arn,
+            Targets=[{'Id': instance_id, 'Port': 8080}]
+        )
+        print("[SUCCESS] Target è ora healthy")
+    except ClientError as e:
+        print(f"[ERROR] Errore nella registrazione del target: {e}")
+        raise
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
 
@@ -200,9 +428,39 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
 
     return vpc_id, rds_security_group_id, ec2_security_group_id
 
-def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_sg_name):
+def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds_sg_name, ec2_sg_name, alb_sg_name):
+
     print("\n[SECTION] Pulizia Risorse AWS")
     print("-" * 50)
+
+    # elimino ALB e Target Group
+    print("[STEP] Eliminazione Application Load Balancer e Target Group...")
+    try:
+        albs = elbv2_client.describe_load_balancers(Names=[ALB_NAME])
+        if albs['LoadBalancers']:
+            alb_arn = albs['LoadBalancers'][0]['LoadBalancerArn']
+            elbv2_client.delete_load_balancer(LoadBalancerArn=alb_arn)
+            print(f"[INFO] ALB '{ALB_NAME}' eliminato. Attesa della cancellazione...")
+            waiter = elbv2_client.get_waiter('load_balancers_deleted')
+            waiter.wait(LoadBalancerArns=[alb_arn])
+            print(f"[SUCCESS] ALB '{ALB_NAME}' eliminato")
+    except ClientError as e:
+        if "LoadBalancerNotFound" in str(e):
+            print(f"[INFO] ALB '{ALB_NAME}' non trovato o già eliminato")
+        else:
+            print(f"[ERROR] Errore nell'eliminazione ALB: {e}")
+
+    try:
+        target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
+        if target_groups['TargetGroups']:
+            tg_arn = target_groups['TargetGroups'][0]['TargetGroupArn']
+            elbv2_client.delete_target_group(TargetGroupArn=tg_arn)
+            print(f"[SUCCESS] Target Group '{TARGET_GROUP_NAME}' eliminato")
+    except ClientError as e:
+        if "TargetGroupNotFound" in str(e):
+            print(f"[INFO] Target Group '{TARGET_GROUP_NAME}' non trovato o già eliminato")
+        else:
+            print(f"[ERROR] Errore nell'eliminazione Target Group: {e}")
 
     # termino EC2
     print("[STEP] Terminazione delle istanze EC2 in corso...")
@@ -262,6 +520,14 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     except ClientError as e:
         if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
 
+    try:
+        alb_sg_id = ec2_client.describe_security_groups(
+            GroupNames=[alb_sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
+        )['SecurityGroups'][0]['GroupId']
+        sg_to_delete.append(alb_sg_id)
+    except ClientError as e:
+        if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
+
     for sg_id in sg_to_delete:
         try:
             sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
@@ -275,7 +541,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             if 'InvalidPermission.NotFound' not in str(e):
                 print(f"[WARNING] Impossibile revocare regole di ingresso per {sg_id}: {e}")
 
-    for sg_name_current in[rds_sg_name, ec2_sg_name]:
+    for sg_name_current in[rds_sg_name, ec2_sg_name, alb_sg_name]:
         try:
             sg_id_current = ec2_client.describe_security_groups(
                 GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
@@ -460,12 +726,45 @@ def main():
         print("-" * 50)
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
+        elbv2 = boto3.client('elbv2', region_name=REGION)
         if "--nords" in os.sys.argv:
             # elimino tutto tranne il database RDS
             print("[INFO] Opzione --nords attiva: elimino tutte le risorse tranne il database RDS.")
-            def delete_resources_no_rds(ec2_client, key_name, rds_sg_name, ec2_sg_name):
+            def delete_resources_no_rds(ec2_client, elbv2_client, key_name, rds_sg_name, ec2_sg_name, alb_sg_name):
                 print("\n[SECTION] Pulizia Risorse AWS - No RDS")
                 print("-" * 50)
+                
+                # Elimina ALB e Target Group
+                print("[STEP] Eliminazione Application Load Balancer e Target Group...")
+                try:
+                    # Elimina ALB
+                    albs = elbv2_client.describe_load_balancers(Names=[ALB_NAME])
+                    if albs['LoadBalancers']:
+                        alb_arn = albs['LoadBalancers'][0]['LoadBalancerArn']
+                        elbv2_client.delete_load_balancer(LoadBalancerArn=alb_arn)
+                        print(f"[INFO] ALB '{ALB_NAME}' eliminato. Attesa della cancellazione...")
+                        waiter = elbv2_client.get_waiter('load_balancers_deleted')
+                        waiter.wait(LoadBalancerArns=[alb_arn])
+                        print(f"[SUCCESS] ALB '{ALB_NAME}' eliminato")
+                except ClientError as e:
+                    if "LoadBalancerNotFound" in str(e):
+                        print(f"[INFO] ALB '{ALB_NAME}' non trovato o già eliminato")
+                    else:
+                        print(f"[ERROR] Errore nell'eliminazione ALB: {e}")
+
+                try:
+                    # Elimina Target Group
+                    target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
+                    if target_groups['TargetGroups']:
+                        tg_arn = target_groups['TargetGroups'][0]['TargetGroupArn']
+                        elbv2_client.delete_target_group(TargetGroupArn=tg_arn)
+                        print(f"[SUCCESS] Target Group '{TARGET_GROUP_NAME}' eliminato")
+                except ClientError as e:
+                    if "TargetGroupNotFound" in str(e):
+                        print(f"[INFO] Target Group '{TARGET_GROUP_NAME}' non trovato o già eliminato")
+                    else:
+                        print(f"[ERROR] Errore nell'eliminazione Target Group: {e}")
+                
                 # Termina le istanze EC2
                 print("[STEP] Terminazione delle istanze EC2 in corso...")
                 instances = ec2_client.describe_instances(
@@ -503,6 +802,13 @@ def main():
                     sg_to_delete.append(ec2_sg_id)
                 except ClientError as e:
                     if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
+                try:
+                    alb_sg_id = ec2_client.describe_security_groups(
+                        GroupNames=[alb_sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
+                    )['SecurityGroups'][0]['GroupId']
+                    sg_to_delete.append(alb_sg_id)
+                except ClientError as e:
+                    if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
                 for sg_id in sg_to_delete:
                     try:
                         sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
@@ -515,7 +821,7 @@ def main():
                     except ClientError as e:
                         if 'InvalidPermission.NotFound' not in str(e):
                             print(f"[WARNING] Impossibile revocare regole di ingresso per {sg_id}: {e}")
-                for sg_name_current in[rds_sg_name, ec2_sg_name]:
+                for sg_name_current in[rds_sg_name, ec2_sg_name, alb_sg_name]:
                     try:
                         sg_id_current = ec2_client.describe_security_groups(
                             GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
@@ -558,9 +864,9 @@ def main():
                         raise
                 print("[SUCCESS] Pulizia delle risorse AWS completata - No RDS.")
 
-            delete_resources_no_rds(ec2, KEY_PAIR_NAME, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
+            delete_resources_no_rds(ec2, elbv2, KEY_PAIR_NAME, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup', 'MusicAppALBSecurityGroup')
         else:
-            delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
+            delete_resources(ec2, rds, elbv2, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup', 'MusicAppALBSecurityGroup')
         return
 
 
@@ -568,6 +874,7 @@ def main():
     print("-" * 50)
     ec2_client = boto3.client('ec2', region_name=REGION)
     rds_client = boto3.client('rds', region_name=REGION)
+    elbv2_client = boto3.client('elbv2', region_name=REGION)
 
     schema_sql_path = os.path.join(
         os.path.dirname(__file__),
@@ -645,7 +952,12 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. setup SNS notification e modifico user_data_script
+        # 5. creo Application Load Balancer e Target Group
+        alb_arn, alb_dns_name, target_group_arn, alb_security_group_id = create_load_balancer_and_target_group(
+            ec2_client, elbv2_client, vpc_id, ec2_security_group_id
+        )
+
+        # 6. setup SNS notification e modifico user_data_script
         topic_name = 'musicapp-server-setup-complete'
         email_address = 'lorenzopaoria@icloud.com'
         topic_arn = setup_sns_notification(REGION, topic_name, email_address)
@@ -657,7 +969,7 @@ def main():
 
         user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
 
-        # 6. deploy istanza EC2 MusicAppServer (o usa esistente)
+        # 7. deploy istanza EC2 MusicAppServer (o usa esistente)
         server_public_ip = None
         server_private_ip = None
         server_instances_found = ec2_client.describe_instances(
@@ -701,6 +1013,11 @@ def main():
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"[SUCCESS] MusicAppServer è in esecuzione. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
 
+        # 8. registra l'istanza EC2 nel Target Group
+        if server_instances_found:
+            server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
+        register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
+
         # configurazione salvata in un file JSON
         config = {
             "server_public_ip": server_public_ip,
@@ -709,7 +1026,9 @@ def main():
             "db_username": DB_MASTER_USERNAME,
             "db_password": DB_MASTER_PASSWORD,
             "db_name": DB_NAME,
-            "key_pair_name": key_pair_name_actual
+            "key_pair_name": key_pair_name_actual,
+            "alb_dns_name": alb_dns_name,
+            "alb_port": "80"
         }
         with open("deploy_config.json", "w") as f:
             json.dump(config, f, indent=4)
