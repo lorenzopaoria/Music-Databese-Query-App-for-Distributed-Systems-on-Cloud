@@ -1,9 +1,7 @@
 #!/bin/bash
 sudo dnf update -y
-# installa Java 17, Git, Maven, Docker, Ruby e AWS CLI
-sudo dnf install -y java-17-amazon-corretto-devel git maven docker
-sudo dnf install -y ruby
-sudo dnf install -y awscli
+# installa Java 17, Git, Maven, Docker e AWS CLI
+sudo dnf install -y java-17-amazon-corretto-devel git maven docker awscli
 sudo systemctl enable docker
 sudo systemctl start docker
 sudo usermod -aG docker ec2-user

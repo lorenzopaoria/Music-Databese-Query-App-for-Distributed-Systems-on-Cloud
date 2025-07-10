@@ -645,7 +645,7 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. Setup SNS notification e modifica user_data_script
+        # 5. setup SNS notification e prepara user_data_script
         topic_name = 'musicapp-server-setup-complete'
         email_address = 'lorenzopaoria@icloud.com'
         topic_arn = setup_sns_notification(REGION, topic_name, email_address)
@@ -658,10 +658,6 @@ def main():
         
         # Sostituisce i placeholder delle credenziali AWS con quelle reali
         user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
-        
-        # Aggiunge la notifica SNS alla fine dello script
-        user_data_script += f"\n\n# Notifica SNS di completamento setup\n" \
-            f"sudo -u ec2-user aws sns publish --region {REGION} --topic-arn {topic_arn} --subject 'MusicApp Server Setup' --message 'Il setup del server EC2 MusicApp è stato completato con successo.'\n"
 
         # 6. deploy istanza EC2 MusicAppServer (o usa esistente)
         server_public_ip = None

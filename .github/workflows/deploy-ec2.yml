@@ -35,41 +35,31 @@ jobs:
           script: |
             set -e
             
-            # Verifica e crea la directory del progetto se non esiste
+            # verifica che la repo esista altrimenti la clona
             if [ ! -d "/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud" ]; then
               echo "Clonando il repository..."
               cd /home/ec2-user
               git clone https://github.com/YOUR_USERNAME/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git
             fi
             
-            # Naviga nella directory del progetto
+            # entra nella directory del progetto
             cd /home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud
             
-            # Effettua pull delle modifiche dal repository
+            # effettuo una fetch e reset per assicurarmi di avere l'ultima versione
             echo "Effettuando pull del repository..."
             git fetch origin
             git reset --hard origin/main
             
-            # Pre-cleanup: Ferma e rimuove tutti i container che usano la porta 8080
-            echo "Pre-cleanup: Fermando tutti i container che usano la porta 8080..."
-            docker ps --filter "publish=8080" -q | xargs -r docker stop || true
-            docker ps --filter "publish=8080" -q | xargs -r docker rm || true
-            
-            # Ferma tutti i container che usano la porta 8080
-            echo "Fermando tutti i container che usano la porta 8080..."
+            # fermo e rimuovo tutti i container che usano la porta 8080
+            echo "Cleanup: Fermando tutti i container che usano la porta 8080..."
             docker ps -q --filter "publish=8080" | xargs -r docker stop || true
             docker ps -aq --filter "publish=8080" | xargs -r docker rm || true
             
-            # Ferma il container specifico per nome (doppia sicurezza)
-            echo "Fermando il container musicapp-server..."
-            docker stop musicapp-server 2>/dev/null || true
-            docker rm musicapp-server 2>/dev/null || true
-            
-            # Aspetta un momento per assicurarsi che le risorse siano liberate
+            # aspetto per assicurarmi che le risorse siano liberate
             echo "Attendendo la liberazione delle risorse..."
             sleep 5
             
-            # Verifica che la porta 8080 sia libera
+            # verifico che la porta 8080 sia libera
             echo "Verificando che la porta 8080 sia libera..."
             if netstat -tulpn 2>/dev/null | grep :8080 || ss -tulpn 2>/dev/null | grep :8080; then
               echo "Attenzione: la porta 8080 è ancora in uso"
@@ -80,28 +70,18 @@ jobs:
               echo "Porta 8080 è libera"
             fi
             
-            # Pulisce le immagini Docker non utilizzate
+            # pulisco le immagini Docker non utilizzate
             echo "Pulizia immagini Docker..."
             docker system prune -f
             
-            # Ricostruisce e avvia il container Docker
+            # build del container Docker
             echo "Ricostruendo il container Docker..."
             if ! docker build -f Dockerfile.dockerfile -t musicapp-server .; then
               echo "Errore durante la build del container Docker"
               exit 1
             fi
             
-            # Avvia il nuovo container
-            echo "Avviando il nuovo container..."
-            
-            # Verifica ancora una volta che non ci siano conflitti di porta
-            if docker ps --filter "publish=8080" --format "table {{.Names}}" | grep -v NAMES | grep -q .; then
-              echo "Errore: rilevato container che usa ancora la porta 8080"
-              docker ps --filter "publish=8080"
-              exit 1
-            fi
-            
-            # Avvia il container con gestione errori migliorata
+            # avvio il container Docker
             if ! docker run -d \
               --name musicapp-server \
               -p 8080:8080 \
@@ -115,11 +95,11 @@ jobs:
               exit 1
             fi
             
-            # Verifica che il container sia in esecuzione
+            # aspetto che il container si avvii
             echo "Verifica del container in esecuzione..."
             sleep 15
             
-            # Controlla lo stato del container
+            # controllo lo stato del container
             if docker ps | grep -q "musicapp-server"; then
               echo "Container musicapp-server è in esecuzione"
               docker ps -a --filter "name=musicapp-server"
@@ -130,7 +110,7 @@ jobs:
               exit 1
             fi
             
-            # Controlla la salute dell'applicazione
+            # controllo che lapplicazione risponda correttamente
             echo "Test di connettività all'applicazione..."
             for i in {1..10}; do
                 # Verifica che la porta sia aperta e in ascolto (senza inviare dati HTTP)
@@ -151,6 +131,7 @@ jobs:
               fi
             done
 
-            sudo -u ec2-user aws sns publish --region us-east-1 --topic-arn $(sudo -u ec2-user aws sns list-topics --region us-east-1 --query "Topics[?contains(TopicArn, 'musicapp-server-setup-complete')].TopicArn" --output text) --subject "MusicApp Server Setup" --message "Il setup del server EC2 MusicApp è stato completato con successo."
+            # invio una notifica SNS per segnalare il completamento del deploy tramite git action
+            sudo -u ec2-user aws sns publish --region us-east-1 --topic-arn $(sudo -u ec2-user aws sns list-topics --region us-east-1 --query "Topics[?contains(TopicArn, 'musicapp-server-setup-complete')].TopicArn" --output text) --subject "MusicApp Server Setup" --message "Il setup del server EC2 MusicApp è stato completato con successo dopo la git action."
             
             echo "Deploy completato!"
