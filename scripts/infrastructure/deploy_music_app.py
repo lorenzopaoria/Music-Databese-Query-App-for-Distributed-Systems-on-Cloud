@@ -134,7 +134,7 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
             TargetType='instance',
             HealthCheckProtocol='TCP',
             HealthCheckPort='8080',
-            HealthCheckIntervalSeconds=60,
+            HealthCheckIntervalSeconds=60,# ogni 60 secondi si connettere alla ec2server per controllare
             HealthCheckTimeoutSeconds=10,
             HealthyThresholdCount=3,
             UnhealthyThresholdCount=3,
@@ -144,11 +144,13 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
             ]
         )
         target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
+        print(f"[SUCCESS] Target Group creato: {TARGET_GROUP_NAME}")
     except ClientError as e:
         if 'DuplicateTargetGroupName' in str(e):
             target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
             existing_tg = target_groups['TargetGroups'][0]
             target_group_arn = existing_tg['TargetGroupArn']
+            print(f"[INFO] Target Group esistente: {TARGET_GROUP_NAME}")
             
             if existing_tg['Protocol'] != 'TCP':
                 elbv2_client.delete_target_group(TargetGroupArn=target_group_arn)
@@ -170,6 +172,7 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
                     ]
                 )
                 target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
+                print(f"[SUCCESS] Target Group ricreato: {TARGET_GROUP_NAME}")
         else:
             raise
 
@@ -187,11 +190,13 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
         )
         nlb_arn = nlb_response['LoadBalancers'][0]['LoadBalancerArn']
         nlb_dns_name = nlb_response['LoadBalancers'][0]['DNSName']
+        print(f"[SUCCESS] Network Load Balancer creato: {nlb_dns_name}")
     except ClientError as e:
         if 'DuplicateLoadBalancerName' in str(e):
             nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
             nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
             nlb_dns_name = nlbs['LoadBalancers'][0]['DNSName']
+            print(f"[INFO] Network Load Balancer esistente: {nlb_dns_name}")
         else:
             raise
 
@@ -211,6 +216,7 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
             ]
         )
         listener_arn = listener_response['Listeners'][0]['ListenerArn']
+        print(f"[SUCCESS] Listener creato sulla porta 8080")
     except ClientError as e:
         if 'DuplicateListener' in str(e):
             listeners = elbv2_client.describe_listeners(LoadBalancerArn=nlb_arn)
@@ -228,6 +234,9 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
                             }
                         ]
                     )
+                    print(f"[SUCCESS] Listener aggiornato")
+                else:
+                    print(f"[INFO] Listener esistente sulla porta 8080")
         else:
             raise
 
@@ -238,12 +247,14 @@ def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
         TargetGroupArn=target_group_arn,
         Targets=[{'Id': instance_id, 'Port': 8080}]
     )
+    print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
     
     waiter = elbv2_client.get_waiter('target_in_service')
     waiter.wait(
         TargetGroupArn=target_group_arn,
         Targets=[{'Id': instance_id, 'Port': 8080}]
     )
+    print(f"[SUCCESS] Target healthy nel Load Balancer")
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
     print("\n[SECTION] VPC e Security Groups")
@@ -251,6 +262,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
     
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values':['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
+    print(f"[INFO] VPC di default: {vpc_id}")
 
     try:
         rds_sg_response = ec2_client.create_security_group(
@@ -259,11 +271,13 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
             VpcId=vpc_id
         )
         rds_security_group_id = rds_sg_response['GroupId']
+        print(f"[SUCCESS] Security Group RDS creato: {rds_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             rds_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppRDSSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
+            print(f"[INFO] Security Group RDS esistente: {rds_security_group_id}")
 
     try:
         ec2_sg_response = ec2_client.create_security_group(
@@ -272,11 +286,13 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
             VpcId=vpc_id
         )
         ec2_security_group_id = ec2_sg_response['GroupId']
+        print(f"[SUCCESS] Security Group EC2 creato: {ec2_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             ec2_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppEC2SecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
+            print(f"[INFO] Security Group EC2 esistente: {ec2_security_group_id}")
 
     permissions = [
         (rds_security_group_id, [
@@ -590,7 +606,7 @@ def main():
             "nlb_dns_name": nlb_dns_name,
             "nlb_port": "8080"
         }
-        
+
         with open("deploy_config.json", "w") as f:
             json.dump(config, f, indent=4)
 
