@@ -645,18 +645,16 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. setup SNS notification e prepara user_data_script
+        # 5. setup SNS notification e modifico user_data_script
         topic_name = 'musicapp-server-setup-complete'
         email_address = 'lorenzopaoria@icloud.com'
         topic_arn = setup_sns_notification(REGION, topic_name, email_address)
         
-        # Legge il file user_data_script.sh
         script_dir = os.path.dirname(os.path.abspath(__file__))
         user_data_script_path = os.path.join(script_dir, 'user_data_script.sh')
         with open(user_data_script_path, 'r') as f:
             user_data_script = f.read()
-        
-        # Sostituisce i placeholder delle credenziali AWS con quelle reali
+
         user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
 
         # 6. deploy istanza EC2 MusicAppServer (o usa esistente)
@@ -703,7 +701,7 @@ def main():
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"[SUCCESS] MusicAppServer è in esecuzione. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
 
-        # Salva la configurazione in un file JSON
+        # configurazione salvata in un file JSON
         config = {
             "server_public_ip": server_public_ip,
             "server_private_ip": server_private_ip,
