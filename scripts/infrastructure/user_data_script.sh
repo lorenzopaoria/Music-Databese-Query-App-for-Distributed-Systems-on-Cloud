@@ -49,7 +49,7 @@ docker build -t music-server-app .
 
 # Run the Docker container
 echo "Running the Docker container..."
-docker run -d -p 8080:8080 --name music-server-container music-server-app
+docker run -d -p 8080:8080 --name musicapp-server music-server-app
 
 echo "Docker container 'music-server-container' is running."
 

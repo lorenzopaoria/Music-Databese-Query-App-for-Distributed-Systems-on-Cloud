@@ -28,16 +28,16 @@ def get_key_pair(ec2_client, key_name):
     """
     try:
         response = ec2_client.describe_key_pairs(KeyNames=[key_name])
-        print(f"EC2 key '{key_name}' già esistente.")
+        print(f"[INFO] La chiave EC2 '{key_name}' è già presente nel tuo account AWS.")
         return response['KeyPairs'][0]['KeyName']
     except ClientError as e:
         if "InvalidKeyPair.NotFound" in str(e):
-            print(f"EC2 key '{key_name}' non trovata. Creazione in corso...")
+            print(f"[INFO] La chiave EC2 '{key_name}' non è stata trovata. Avvio della creazione...")
             key_pair = ec2_client.create_key_pair(KeyName=key_name)
             with open(f"{key_name}.pem", "w") as f:
                 f.write(key_pair['KeyMaterial'])
             os.chmod(f"{key_name}.pem", 0o400)
-            print(f"Key '{key_name}.pem' creata.")
+            print(f"[SUCCESS] File '{key_name}.pem' creato e salvato localmente.")
             return key_pair['KeyName']
         else:
             raise
@@ -47,11 +47,11 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
     Verifica che la VPC di default esista e crea o recupera i Security Group necessari per EC2 e RDS.
     Imposta anche le regole di ingresso per PostgreSQL, SSH e traffico applicativo.
     """
-    print("Controllo o creazione di VPC e Security Groups...")
+    print("[STEP] Verifica o creazione di VPC e Security Groups in corso...")
     # Ottieni la VPC di default
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
-    print(f"VPC di default trovata: {vpc_id}")
+    print(f"[INFO] VPC di default individuata: {vpc_id}")
 
     # Crea Security Group per RDS
     try:
@@ -61,13 +61,13 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
             VpcId=vpc_id
         )
         rds_security_group_id = rds_sg_response['GroupId']
-        print(f"Security Group RDS creata: {rds_security_group_id}")
+        print(f"[SUCCESS] Security Group per RDS creata con ID: {rds_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             rds_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppRDSSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group RDS già esistente: {rds_security_group_id}")
+            print(f"[INFO] Security Group per RDS già esistente: {rds_security_group_id}")
         else:
             raise
 
@@ -79,13 +79,13 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
             VpcId=vpc_id
         )
         ec2_security_group_id = ec2_sg_response['GroupId']
-        print(f"Security Group EC2 creata: {ec2_security_group_id}")
+        print(f"[SUCCESS] Security Group per EC2 creata con ID: {ec2_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             ec2_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppEC2SecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            print(f"Security Group EC2 già esistente: {ec2_security_group_id}")
+            print(f"[INFO] Security Group per EC2 già esistente: {ec2_security_group_id}")
         else:
             raise
 
@@ -102,10 +102,10 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
                 }
             ]
         )
-        print("Regola di ingresso RDS SG autorizzata per EC2 SG.")
+        print("[SUCCESS] Regola di ingresso per RDS autorizzata dal Security Group EC2.")
     except ClientError as e:
         if 'InvalidPermission.Duplicate' in str(e):
-            print("Regola di ingresso RDS SG già esistente (EC2->RDS).")
+            print("[INFO] Regola di ingresso per RDS già presente (EC2->RDS).")
         else:
             raise
 
@@ -122,10 +122,10 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
                 }
             ]
         )
-        print("Regola di ingresso RDS SG autorizzata per 0.0.0.0/0 (per inizializzazione locale).")
+        print("[SUCCESS] Regola di ingresso per RDS autorizzata da 0.0.0.0/0 (inizializzazione locale).");
     except ClientError as e:
         if 'InvalidPermission.Duplicate' in str(e):
-            print("Regola di ingresso RDS SG già esistente (0.0.0.0/0->RDS).")
+            print("[INFO] Regola di ingresso per RDS già presente (0.0.0.0/0->RDS).")
         else:
             raise
             
@@ -148,10 +148,10 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
                 }
             ]
         )
-        print("Regole di ingresso EC2 SG autorizzate (SSH, App).")
+        print("[SUCCESS] Regole di ingresso per EC2 autorizzate (SSH e applicazione).");
     except ClientError as e:
         if 'InvalidPermission.Duplicate' in str(e):
-            print("Regole di ingresso EC2 SG già esistenti.")
+            print("[INFO] Regole di ingresso per EC2 già presenti.")
         else:
             raise
 
@@ -161,10 +161,10 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     """
     Elimina tutte le risorse AWS create da questo deployment: istanze EC2, istanza RDS, Security Groups e Key Pair.
     """
-    print("Avvio della pulizia delle risorse AWS...")
+    print("[STEP] Avvio della procedura di pulizia delle risorse AWS...")
 
     # Termina le istanze EC2
-    print("Terminazione delle istanze EC2...")
+    print("[STEP] Terminazione delle istanze EC2 in corso...")
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values': ['MusicApp']}]
     )
@@ -175,15 +175,15 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
                 instance_ids.append(instance['InstanceId'])
     if instance_ids:
         ec2_client.terminate_instances(InstanceIds=instance_ids)
-        print(f"Istanze EC2 terminate: {instance_ids}. Attesa della terminazione...")
+        print(f"[INFO] Istanze EC2 terminate: {instance_ids}. Attendo la conferma di terminazione...")
         waiter = ec2_client.get_waiter('instance_terminated')
         waiter.wait(InstanceIds=instance_ids)
-        print("Istanze EC2 terminate con successo.")
+        print("[SUCCESS] Tutte le istanze EC2 sono state terminate correttamente.")
     else:
-        print("Nessuna istanza EC2 'MusicApp' trovata da terminare.")
+        print("[INFO] Nessuna istanza EC2 'MusicApp' trovata da terminare.")
 
     # Elimina istanza RDS
-    print(f"Eliminazione dell'istanza RDS '{rds_id}'...")
+    print(f"[STEP] Eliminazione dell'istanza RDS '{rds_id}' in corso...")
     try:
         rds_client.delete_db_instance(
             DBInstanceIdentifier=rds_id,
@@ -391,175 +391,6 @@ def get_account_id():
     sts = boto3.client('sts')
     return sts.get_caller_identity()['Account']
 
-def create_ec2_codedeploy_role(iam_client):
-    role_name = "MusicAppEC2CodeDeployRole"
-    assume_role_policy = {
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Effect": "Allow",
-            "Principal": {"Service": "ec2.amazonaws.com"},
-            "Action": "sts:AssumeRole"
-        }]
-    }
-    try:
-        role = iam_client.create_role(
-            RoleName=role_name,
-            AssumeRolePolicyDocument=json.dumps(assume_role_policy),
-            Description="Ruolo per EC2 per lavorare con CodeDeploy"
-        )
-        print(f"Ruolo IAM '{role_name}' creato.")
-    except ClientError as e:
-        if "EntityAlreadyExists" in str(e):
-            print(f"Ruolo IAM '{role_name}' già esistente.")
-            role = iam_client.get_role(RoleName=role_name)
-        else:
-            raise
-
-    # Associa la policy gestita per CodeDeploy
-    policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy"
-    try:
-        iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
-        print(f"Policy '{policy_arn}' associata a '{role_name}'.")
-    except ClientError as e:
-        if "EntityAlreadyExists" in str(e):
-            print(f"Policy già associata.")
-        else:
-            raise
-
-    return role['Role']['Arn']
-
-def create_codepipeline(pipeline_name, repo_owner, repo_name, branch, buildspec_path, appspec_path, region):
-    codepipeline = boto3.client('codepipeline', region_name=region)
-    codebuild = boto3.client('codebuild', region_name=region)
-    codedeploy = boto3.client('codedeploy', region_name=region)
-    s3 = boto3.client('s3', region_name=region)
-    account_id = get_account_id()
-    artifact_bucket = f"musicapp-codepipeline-artifacts-{account_id}"
-
-    # Crea bucket S3 se non esiste
-    try:
-        s3.head_bucket(Bucket=artifact_bucket)
-        print(f"Bucket S3 '{artifact_bucket}' già esistente.")
-    except ClientError:
-        if region == "us-east-1":
-            s3.create_bucket(Bucket=artifact_bucket)
-        else:
-            s3.create_bucket(
-                Bucket=artifact_bucket,
-                CreateBucketConfiguration={'LocationConstraint': region}
-            )
-        print(f"Bucket S3 '{artifact_bucket}' creato.")
-
-    # Crea progetto CodeBuild se non esiste
-    build_project_name = f"{pipeline_name}-build"
-    try:
-        codebuild.batch_get_projects(names=[build_project_name])['projects'][0]
-        print(f"Progetto CodeBuild '{build_project_name}' già esistente.")
-    except (IndexError, ClientError):
-        codebuild.create_project(
-            name=build_project_name,
-            source={
-                'type': 'GITHUB',
-                'location': f"https://github.com/{repo_owner}/{repo_name}.git",
-                'buildspec': buildspec_path
-            },
-            artifacts={'type': 'S3', 'location': artifact_bucket},
-            environment={
-                'type': 'LINUX_CONTAINER',
-                'image': 'aws/codebuild/standard:7.0',
-                'computeType': 'BUILD_GENERAL1_SMALL'
-            },
-            serviceRole=f"arn:aws:iam::{account_id}:role/service-role/AWSCodeBuildServiceRole"
-        )
-        print(f"Progetto CodeBuild '{build_project_name}' creato.")
-
-    # Crea applicazione CodeDeploy se non esiste
-    codedeploy_app_name = f"{pipeline_name}-codedeploy"
-    try:
-        codedeploy.get_application(applicationName=codedeploy_app_name)
-        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' già esistente.")
-    except ClientError:
-        codedeploy.create_application(applicationName=codedeploy_app_name, computePlatform='Server')
-        print(f"Applicazione CodeDeploy '{codedeploy_app_name}' creata.")
-
-    # Crea pipeline CodePipeline
-    try:
-        codepipeline.get_pipeline(name=pipeline_name)
-        print(f"Pipeline '{pipeline_name}' già esistente.")
-    except ClientError:
-        pipeline = {
-            'pipeline': {
-                'name': pipeline_name,
-                'roleArn': f"arn:aws:iam::{account_id}:role/AWSCodePipelineServiceRole",
-                'artifactStore': {
-                    'type': 'S3',
-                    'location': artifact_bucket
-                },
-                'stages': [
-                    {
-                        'name': 'Source',
-                        'actions': [{
-                            'name': 'Source',
-                            'actionTypeId': {
-                                'category': 'Source',
-                                'owner': 'ThirdParty',
-                                'provider': 'GitHub',
-                                'version': '1'
-                            },
-                            'outputArtifacts': [{'name': 'SourceArtifact'}],
-                            'configuration': {
-                                'Owner': repo_owner,
-                                'Repo': repo_name,
-                                'Branch': branch,
-                                'OAuthToken': os.environ.get('GITHUB_TOKEN', 'INSERISCI_TOKEN_GITHUB')
-                            },
-                            'runOrder': 1
-                        }]
-                    },
-                    {
-                        'name': 'Build',
-                        'actions': [{
-                            'name': 'Build',
-                            'actionTypeId': {
-                                'category': 'Build',
-                                'owner': 'AWS',
-                                'provider': 'CodeBuild',
-                                'version': '1'
-                            },
-                            'inputArtifacts': [{'name': 'SourceArtifact'}],
-                            'outputArtifacts': [{'name': 'BuildArtifact'}],
-                            'configuration': {
-                                'ProjectName': build_project_name
-                            },
-                            'runOrder': 1
-                        }]
-                    },
-                    {
-                        'name': 'Deploy',
-                        'actions': [{
-                            'name': 'Deploy',
-                            'actionTypeId': {
-                                'category': 'Deploy',
-                                'owner': 'AWS',
-                                'provider': 'CodeDeploy',
-                                'version': '1'
-                            },
-                            'inputArtifacts': [{'name': 'BuildArtifact'}],
-                            'configuration': {
-                                'ApplicationName': codedeploy_app_name,
-                                'DeploymentGroupName': 'MusicAppDeploymentGroup'
-                            },
-                            'runOrder': 1
-                        }]
-                    }
-                ],
-                'version': 1
-            }
-        }
-        codepipeline.create_pipeline(**pipeline)
-        print(f"Pipeline '{pipeline_name}' creata.")
-
-# --- Logica principale di deploy ---
 def main():
     if "--clean" in os.sys.argv:
         ec2 = boto3.client('ec2', region_name=REGION)

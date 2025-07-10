@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-"""
-Script per aggiornare automaticamente i secrets di GitHub Actions
-"""
 import requests
 import json
 import os
@@ -10,30 +6,26 @@ from nacl import encoding, public
 from dotenv import load_dotenv
 
 def load_environment():
-    """
-    Carica le variabili d'ambiente dal file .env
-    """
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(script_dir))
     env_file = os.path.join(project_root, ".env")
     
     if not os.path.exists(env_file):
-        print(f"File .env non trovato: {env_file}")
+        print(f"[ERRORE] File .env non trovato: {env_file}")
         return None
     
     load_dotenv(env_file)
     github_token = os.getenv('GITHUB_TOKEN')
     
     if not github_token:
-        print("GITHUB_TOKEN non trovato nel file .env")
+        print("[ERRORE] Variabile GITHUB_TOKEN non trovata nel file .env")
         return None
     
     return github_token
 
 def get_repo_info():
-    """
-    Determina automaticamente owner e repository dal remote git
-    """
+
     try:
         import subprocess
         result = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True, check=True)
@@ -56,13 +48,11 @@ def get_repo_info():
             raise ValueError("Non è un repository GitHub")
             
     except Exception as e:
-        print(f"Errore nel determinare il repository: {e}")
+        print(f"[ERRORE] Impossibile determinare il repository: {e}")
         return None, None
 
 def get_public_key(owner, repo, token):
-    """
-    Ottiene la chiave pubblica del repository per criptare i secrets
-    """
+
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/public-key"
     headers = {
         'Authorization': f'token {token}',
@@ -74,14 +64,12 @@ def get_public_key(owner, repo, token):
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"Errore nell'ottenere la chiave pubblica: {response.status_code}")
+        print(f"[ERRORE] Impossibile ottenere la chiave pubblica dal repository (status {response.status_code})")
         print(response.text)
         return None
 
 def encrypt_secret(public_key, secret_value):
-    """
-    Cripta il secret usando la chiave pubblica del repository (formato GitHub/Sodium)
-    """
+
     # Decodifica la chiave pubblica da base64
     public_key_bytes = base64.b64decode(public_key)
     
@@ -98,9 +86,7 @@ def encrypt_secret(public_key, secret_value):
     return base64.b64encode(encrypted).decode('utf-8')
 
 def update_secret(owner, repo, token, secret_name, secret_value, key_id, public_key):
-    """
-    Aggiorna un secret del repository
-    """
+
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/{secret_name}"
     headers = {
         'Authorization': f'token {token}',
@@ -117,17 +103,15 @@ def update_secret(owner, repo, token, secret_name, secret_value, key_id, public_
     response = requests.put(url, headers=headers, json=data)
     
     if response.status_code in [201, 204]:
-        print(f"Secret {secret_name} aggiornato con successo!")
+        print(f"[SUCCESS] Secret '{secret_name}' aggiornato correttamente.")
         return True
     else:
-        print(f"Errore nell'aggiornamento del secret {secret_name}: {response.status_code}")
+        print(f"[ERRORE] Aggiornamento del secret '{secret_name}' fallito (status {response.status_code})")
         print(response.text)
         return False
 
 def main():
-    """
-    Funzione principale
-    """
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Carica il token GitHub
@@ -138,10 +122,10 @@ def main():
     # Determina owner e repository
     owner, repo = get_repo_info()
     if not owner or not repo:
-        print("❌ Impossibile determinare owner e repository")
+        print("[ERRORE] Impossibile determinare owner e repository.")
         return
     
-    print(f"📍 Repository: {owner}/{repo}")
+    print(f"[INFO] Repository selezionato: {owner}/{repo}")
     
     # Percorsi dei file
     config_file = os.path.join(script_dir, "deploy_config.json")
@@ -149,11 +133,11 @@ def main():
     
     # Verifica esistenza dei file
     if not os.path.exists(config_file):
-        print(f"File di configurazione non trovato: {config_file}")
+        print(f"[ERRORE] File di configurazione non trovato: {config_file}")
         return
     
     if not os.path.exists(pem_file):
-        print(f"File PEM non trovato: {pem_file}")
+        print(f"[ERRORE] File PEM non trovato: {pem_file}")
         return
     
     # Leggi la configurazione
@@ -173,7 +157,7 @@ def main():
     success = True
     
     # Aggiorna EC2_HOST
-    print(f"Aggiornando EC2_HOST con: {config['server_public_ip']}")
+    print(f"[STEP] Aggiornamento del secret EC2_HOST con valore: {config['server_public_ip']}")
     if not update_secret(owner, repo, github_token, "EC2_HOST", 
                         config['server_public_ip'], 
                         public_key_info['key_id'], 
@@ -181,7 +165,7 @@ def main():
         success = False
     
     # Aggiorna EC2_SSH_KEY
-    print("Aggiornando EC2_SSH_KEY...")
+    print("[STEP] Aggiornamento del secret EC2_SSH_KEY in corso...")
     if not update_secret(owner, repo, github_token, "EC2_SSH_KEY", 
                         pem_content, 
                         public_key_info['key_id'], 
@@ -189,10 +173,10 @@ def main():
         success = False
     
     if success:
-        print("Tutti i secrets sono stati aggiornati con successo!")
-        print("Ora puoi procedere con il push per triggerare il deploy!")
+        print("[SUCCESS] Tutti i secrets sono stati aggiornati correttamente!")
+        print("[INFO] Ora puoi procedere con il push per triggerare il deploy!")
     else:
-        print("Alcuni secrets non sono stati aggiornati correttamente.")
+        print("[ERRORE] Alcuni secrets non sono stati aggiornati correttamente.")
 
 if __name__ == "__main__":
     main()
