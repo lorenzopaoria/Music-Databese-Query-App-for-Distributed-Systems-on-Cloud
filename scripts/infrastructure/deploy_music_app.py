@@ -23,9 +23,7 @@ DB_NAME = 'musicdb'
 
 # --- Funzioni di supporto ---
 def get_key_pair(ec2_client, key_name):
-    """
-    Controlla se la key pair EC2 esiste,se non esiste la crea e salva il file .pem localmente.
-    """
+
     try:
         response = ec2_client.describe_key_pairs(KeyNames=[key_name])
         print(f"[INFO] La chiave EC2 '{key_name}' è già presente nel tuo account AWS.")
@@ -43,10 +41,7 @@ def get_key_pair(ec2_client, key_name):
             raise
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
-    """
-    Verifica che la VPC di default esista e crea o recupera i Security Group necessari per EC2 e RDS.
-    Imposta anche le regole di ingresso per PostgreSQL, SSH e traffico applicativo.
-    """
+
     print("[STEP] Verifica o creazione di VPC e Security Groups in corso...")
     # Ottieni la VPC di default
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
@@ -158,9 +153,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
     return vpc_id, rds_security_group_id, ec2_security_group_id
 
 def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_sg_name):
-    """
-    Elimina tutte le risorse AWS create da questo deployment: istanze EC2, istanza RDS, Security Groups e Key Pair.
-    """
+
     print("[STEP] Avvio della procedura di pulizia delle risorse AWS...")
 
     # Termina le istanze EC2
@@ -192,12 +185,12 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
         print(f"Istanza RDS '{rds_id}' eliminata. Attesa della cancellazione...")
         waiter = rds_client.get_waiter('db_instance_deleted')
         waiter.wait(DBInstanceIdentifier=rds_id)
-        print(f"Istanza RDS '{rds_id}' eliminata con successo.")
+        print(f"[OK] Istanza RDS '{rds_id}' eliminata.")
     except ClientError as e:
         if "DBInstanceNotFound" in str(e):
-            print(f"Istanza RDS '{rds_id}' non trovata o già eliminata.")
+            print(f"[INFO] Istanza RDS '{rds_id}' non trovata o già eliminata.")
         else:
-            print(f"Errore durante l'eliminazione dell'istanza RDS: {e}")
+            print(f"[ERRORE] durante l'eliminazione dell'istanza RDS: {e}")
 
     # Elimina Security Groups
     print("Eliminazione dei Security Groups...")
@@ -627,21 +620,6 @@ def main():
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"MusicAppServer è in esecuzione. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
 
-        # 7. Deploy istanze EC2 MusicAppClient (o usa esistenti)
-        client_public_ips = []
-        client_private_ips = []
-        # Nessun deploy client EC2: il client verrà eseguito in locale
-        print("\n--- Deploy completato ---")
-        print("Dettagli di connessione:")
-        print(f"SSH Key: {key_pair_name_actual}.pem")
-        print(f"RDS Endpoint: {rds_endpoint}")
-        print(f"DB User: {DB_MASTER_USERNAME}")
-        print(f"DB Password: {DB_MASTER_PASSWORD}")
-        print(f"DB Name: {DB_NAME}")
-        print(f"\nServer EC2 Public IP: {server_public_ip}")
-        print(f"Server EC2 Private IP (per client nella stessa VPC): {server_private_ip}")
-        print(f"Client locale: usa il public IP del server EC2 per connetterti")
-
         # Salva la configurazione in un file JSON
         config = {
             "server_public_ip": server_public_ip,
@@ -656,21 +634,25 @@ def main():
         with open("deploy_config.json", "w") as f:
             json.dump(config, f, indent=4)
         print("\nConfigurazione salvata in 'deploy_config.json'.")
-        print("\n==============================")
-        print("   GUIDA STEP-BY-STEP DEPLOY  ")
-        print("==============================")
-        print("1. Eseguire update_github_secrets.py per aggiornare i segreti GitHub:")
-        print("   py scripts/infrastructure/update_github_secrets.py")
-        print("2. Aggiorna i file di configurazione Java locali:")
-        print("   python scripts/infrastructure/update_java_config_on_ec2.py")
-        print("   Alla fine dopo il push la git action dovrebbe avviarsi automaticamente.")
-        print("3. Per avviare il server, connettersi via SSH all'istanza EC2:")
-        print(f"   ssh -i {key_pair_name_actual}.pem ec2-user@{server_public_ip}")
-        print("4. Per avviare il client, eseguire il client Java in locale:")
-        print("   mvn clean install && mvn -Pclient exec:java")
-        print("\nPer veder i log del container docker dove gira il server:")
-        print(f"   docker logs -f musicappserver")
-        print("==============================\n")
+        print("\n╔════════════════════════════════════════════════════╗")
+        print("║           GUIDA RAPIDA DEPLOY APPLICAZIONE        ║")
+        print("╠════════════════════════════════════════════════════╣")
+        print("║ 1. Aggiorna i segreti GitHub                      ║")
+        print("║    py scripts/infrastructure/update_github_secrets.py")
+        print("║                                                  ║")
+        print("║ 2. Aggiorna i file di configurazione Java locali  ║")
+        print("║    python scripts/infrastructure/update_java_config_on_ec2.py")
+        print("║    Dopo il push, la GitHub Action parte da sola   ║")
+        print("║                                                  ║")
+        print("║ 3. Avvia il server via SSH su EC2                 ║")
+        print(f"║    ssh -i {key_pair_name_actual}.pem ec2-user@{server_public_ip}         ")
+        print("║                                                  ║")
+        print("║ 4. Avvia il client Java in locale                 ║")
+        print("║    mvn clean install && mvn -Pclient exec:java    ║")
+        print("║                                                  ║")
+        print("║ Log del container Docker del server:              ║")
+        print(f"║    docker logs -f musicappserver                  ")
+        print("╚════════════════════════════════════════════════════╝\n")
 
     except ClientError as e:
         print(f"Si è verificato un errore AWS: {e}")
