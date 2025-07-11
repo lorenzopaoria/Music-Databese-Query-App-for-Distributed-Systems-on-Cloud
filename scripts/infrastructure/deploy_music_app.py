@@ -242,12 +242,87 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
 
     return nlb_arn, nlb_dns_name, target_group_arn
 
+def clean_obsolete_targets(elbv2_client, ec2_client, target_group_arn, current_instance_id):
+    """Rimuove target obsoleti dal Target Group, mantenendo solo quello corrente"""
+    try:
+        # Ottiene tutti i target registrati
+        response = elbv2_client.describe_target_health(TargetGroupArn=target_group_arn)
+        
+        targets_to_remove = []
+        for target_health in response['TargetHealthDescriptions']:
+            target_id = target_health['Target']['Id']
+            
+            # Se non è l'istanza corrente, verifica se deve essere rimossa
+            if target_id != current_instance_id:
+                try:
+                    instance_response = ec2_client.describe_instances(InstanceIds=[target_id])
+                    instance_state = instance_response['Reservations'][0]['Instances'][0]['State']['Name']
+                    
+                    # Se l'istanza è terminata o fermata, rimuovila dal target group
+                    if instance_state in ['terminated', 'shutting-down', 'stopped']:
+                        targets_to_remove.append({'Id': target_id, 'Port': 8080})
+                        print(f"[INFO] Target obsoleto {target_id} sarà rimosso (stato: {instance_state})")
+                        
+                except ClientError as e:
+                    if "InvalidInstanceID.NotFound" in str(e):
+                        # L'istanza non esiste più, rimuovila dal target group
+                        targets_to_remove.append({'Id': target_id, 'Port': 8080})
+                        print(f"[INFO] Target obsoleto {target_id} sarà rimosso (istanza non trovata)")
+        
+        # Rimuove i target obsoleti
+        if targets_to_remove:
+            elbv2_client.deregister_targets(
+                TargetGroupArn=target_group_arn,
+                Targets=targets_to_remove
+            )
+            print(f"[SUCCESS] Rimossi {len(targets_to_remove)} target obsoleti dal Target Group")
+        else:
+            print(f"[INFO] Nessun target obsoleto trovato nel Target Group")
+            
+    except ClientError as e:
+        print(f"[WARNING] Errore nella pulizia del Target Group: {e}")
+
 def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id, wait_for_health=True):
-    elbv2_client.register_targets(
-        TargetGroupArn=target_group_arn,
-        Targets=[{'Id': instance_id, 'Port': 8080}]
-    )
-    print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
+    # Prima verifica se il target è già registrato
+    try:
+        response = elbv2_client.describe_target_health(
+            TargetGroupArn=target_group_arn,
+            Targets=[{'Id': instance_id, 'Port': 8080}]
+        )
+        
+        if response['TargetHealthDescriptions']:
+            current_state = response['TargetHealthDescriptions'][0]['TargetHealth']['State']
+            print(f"[INFO] Target {instance_id} già registrato con stato: {current_state}")
+            
+            # Se il target è in uno stato problematico, lo riregistra
+            if current_state in ['unhealthy', 'unused', 'draining']:
+                print(f"[INFO] Target in stato {current_state}, riregistrazione...")
+                elbv2_client.deregister_targets(
+                    TargetGroupArn=target_group_arn,
+                    Targets=[{'Id': instance_id, 'Port': 8080}]
+                )
+                time.sleep(5)  # Attende un po' prima di riregistrare
+            else:
+                print(f"[INFO] Target già in stato accettabile: {current_state}")
+                return
+    except ClientError as e:
+        if "TargetNotFound" in str(e):
+            print(f"[INFO] Target {instance_id} non trovato nel Target Group, registrazione...")
+        else:
+            print(f"[WARNING] Errore nel controllo target: {e}")
+    
+    # Registra o riregistra il target
+    try:
+        elbv2_client.register_targets(
+            TargetGroupArn=target_group_arn,
+            Targets=[{'Id': instance_id, 'Port': 8080}]
+        )
+        print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
+    except ClientError as e:
+        if "TargetAlreadyExists" in str(e):
+            print(f"[INFO] Target {instance_id} già registrato")
+        else:
+            raise
     
     if wait_for_health:
         print(f"[INFO] Attendendo che il target diventi healthy...")
@@ -618,8 +693,13 @@ def main():
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"[SUCCESS] EC2 attivo: {server_public_ip}")
 
-        if server_instances_found:
-            server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
+        # Registra sempre l'istanza EC2 corrente al Target Group (nuova o esistente)
+        print(f"\n[STEP] Registrazione EC2 {server_instance_id} al Target Group...")
+        
+        # Prima pulisce i target obsoleti se il Target Group esiste
+        clean_obsolete_targets(elbv2_client, ec2_client, target_group_arn, server_instance_id)
+        
+        # Poi registra l'istanza corrente
         register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id, wait_for_health=False)
 
         config = {
