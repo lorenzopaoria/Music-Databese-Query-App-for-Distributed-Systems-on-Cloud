@@ -4,6 +4,7 @@ import os
 import psycopg2
 import json
 import configparser
+import time
 from botocore.exceptions import ClientError
 
 # configurazione AWS
@@ -302,7 +303,7 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
     return nlb_arn, nlb_dns_name, target_group_arn
 
 def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
-    """Registra l'istanza EC2 nel Target Group"""
+    """Registra l'istanza EC2 nel Target Group senza attendere l'health check"""
     print(f"\n[STEP] Registrazione istanza {instance_id} nel Target Group...")
     try:
         elbv2_client.register_targets(
@@ -315,15 +316,9 @@ def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
             ]
         )
         print(f"[SUCCESS] Istanza {instance_id} registrata nel Target Group")
+        print(f"[INFO] L'istanza dovrebbe diventare healthy automaticamente")
+        print(f"[INFO] Verifica lo stato nella console AWS se necessario")
         
-        # Attendi che il target diventi healthy
-        print("[INFO] Attesa che il target diventi healthy...")
-        waiter = elbv2_client.get_waiter('target_in_service')
-        waiter.wait(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        print("[SUCCESS] Target è ora healthy")
     except ClientError as e:
         print(f"[ERROR] Errore nella registrazione del target: {e}")
         raise
@@ -725,6 +720,65 @@ def setup_sns_notification(region, topic_name, email_address):
         raise
     return topic_arn
 
+def wait_for_sns_notification(sns_client, topic_arn, max_wait_minutes=15):
+    
+    print(f"[INFO] Monitoraggio notifiche SNS per topic: {topic_arn.split(':')[-1]}")
+    print(f"[INFO] Timeout massimo: {max_wait_minutes} minuti")
+    
+    cloudwatch = boto3.client('cloudwatch', region_name=REGION)
+    start_time = time.time()
+    max_wait_seconds = max_wait_minutes * 60
+    
+    # Ottieni il numero di messaggi pubblicati prima dell'attesa
+    initial_messages = get_sns_message_count(cloudwatch, topic_arn)
+    
+    while time.time() - start_time < max_wait_seconds:
+        try:
+            current_messages = get_sns_message_count(cloudwatch, topic_arn)
+            elapsed = int(time.time() - start_time)
+            
+            print(f"[INFO] Controllo SNS - Tempo: {elapsed}s - Messaggi: {current_messages}")
+            
+            if current_messages > initial_messages:
+                print(f"[SUCCESS] Nuova notifica SNS rilevata!")
+                return True
+            
+            time.sleep(30)  # Controlla ogni 30 secondi
+            
+        except Exception as e:
+            print(f"[WARNING] Errore nel controllo SNS: {e}")
+            time.sleep(30)
+    
+    print(f"[WARNING] Timeout raggiunto - nessuna nuova notifica SNS rilevata")
+    return False
+
+def get_sns_message_count(cloudwatch, topic_arn):
+
+    try:
+        topic_name = topic_arn.split(':')[-1]
+        response = cloudwatch.get_metric_statistics(
+            Namespace='AWS/SNS',
+            MetricName='NumberOfMessagesPublished',
+            Dimensions=[
+                {
+                    'Name': 'TopicName',
+                    'Value': topic_name
+                }
+            ],
+            StartTime=time.time() - 3600,  # Ultima ora
+            EndTime=time.time(),
+            Period=300,  # 5 minuti
+            Statistics=['Sum']
+        )
+        
+        if response['Datapoints']:
+            return sum(point['Sum'] for point in response['Datapoints'])
+        return 0
+        
+    except Exception as e:
+        print(f"[WARNING] Errore nel recupero metriche SNS: {e}")
+        return 0
+
 def main():
     if "--clean" in os.sys.argv:
         print("\n[SECTION] Pulizia Risorse AWS")
@@ -1013,10 +1067,21 @@ def main():
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"[SUCCESS] MusicAppServer è in esecuzione. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
 
-        # 8. registra l'istanza EC2 nel Target Group
+        # 8. Aspetta la notifica SNS di completamento prima di registrare nel Target Group
         if server_instances_found:
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
-        register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
+        
+        print(f"[INFO] Aspettando notifica SNS di completamento user data...")
+        sns_client = boto3.client('sns', region_name=REGION)
+        notification_received = wait_for_sns_notification(sns_client, topic_arn, max_wait_minutes=15)
+        
+        if notification_received:
+            print(f"[SUCCESS] Notifica SNS ricevuta! Procedendo con la registrazione nel Target Group...")
+            register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
+        else:
+            print(f"[WARNING] Notifica SNS non ricevuta nel tempo previsto")
+            print(f"[INFO] Registrazione nel Target Group comunque...")
+            register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
 
         # configurazione salvata in un file JSON
         config = {
