@@ -132,7 +132,7 @@ def update_local_java_config(
         f.write(content)
     print("[SUCCESS] File di configurazione Java locali aggiornati.")
 
-def main():
+def main():#
 
     with open("deploy_config.json", "r") as f:
         config = json.load(f)
