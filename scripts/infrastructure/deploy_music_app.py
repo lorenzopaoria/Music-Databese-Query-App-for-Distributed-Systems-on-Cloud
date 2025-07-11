@@ -242,100 +242,19 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
 
     return nlb_arn, nlb_dns_name, target_group_arn
 
-def clean_obsolete_targets(elbv2_client, ec2_client, target_group_arn, current_instance_id):
-    """Rimuove target obsoleti dal Target Group, mantenendo solo quello corrente"""
-    try:
-        # Ottiene tutti i target registrati
-        response = elbv2_client.describe_target_health(TargetGroupArn=target_group_arn)
-        
-        targets_to_remove = []
-        for target_health in response['TargetHealthDescriptions']:
-            target_id = target_health['Target']['Id']
-            
-            # Se non è l'istanza corrente, verifica se deve essere rimossa
-            if target_id != current_instance_id:
-                try:
-                    instance_response = ec2_client.describe_instances(InstanceIds=[target_id])
-                    instance_state = instance_response['Reservations'][0]['Instances'][0]['State']['Name']
-                    
-                    # Se l'istanza è terminata o fermata, rimuovila dal target group
-                    if instance_state in ['terminated', 'shutting-down', 'stopped']:
-                        targets_to_remove.append({'Id': target_id, 'Port': 8080})
-                        print(f"[INFO] Target obsoleto {target_id} sarà rimosso (stato: {instance_state})")
-                        
-                except ClientError as e:
-                    if "InvalidInstanceID.NotFound" in str(e):
-                        # L'istanza non esiste più, rimuovila dal target group
-                        targets_to_remove.append({'Id': target_id, 'Port': 8080})
-                        print(f"[INFO] Target obsoleto {target_id} sarà rimosso (istanza non trovata)")
-        
-        # Rimuove i target obsoleti
-        if targets_to_remove:
-            elbv2_client.deregister_targets(
-                TargetGroupArn=target_group_arn,
-                Targets=targets_to_remove
-            )
-            print(f"[SUCCESS] Rimossi {len(targets_to_remove)} target obsoleti dal Target Group")
-        else:
-            print(f"[INFO] Nessun target obsoleto trovato nel Target Group")
-            
-    except ClientError as e:
-        print(f"[WARNING] Errore nella pulizia del Target Group: {e}")
-
-def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id, wait_for_health=True):
-    print(f"[INFO] Forzando registrazione di {instance_id} al Target Group...")
+def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
+    elbv2_client.register_targets(
+        TargetGroupArn=target_group_arn,
+        Targets=[{'Id': instance_id, 'Port': 8080}]
+    )
+    print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
     
-    # Sempre deregistra prima (se presente) per assicurarsi di una registrazione pulita
-    try:
-        elbv2_client.deregister_targets(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        print(f"[INFO] Target {instance_id} deregistrato (se era presente)")
-        time.sleep(3)  # Breve pausa per permettere la deregistrazione
-    except ClientError as e:
-        if "TargetNotFound" not in str(e):
-            print(f"[WARNING] Errore nella deregistrazione: {e}")
-    
-    # Ora registra sempre il target
-    try:
-        elbv2_client.register_targets(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
-        
-        # Verifica immediatamente la registrazione
-        response = elbv2_client.describe_target_health(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        
-        if response['TargetHealthDescriptions']:
-            current_state = response['TargetHealthDescriptions'][0]['TargetHealth']['State']
-            print(f"[INFO] Stato target dopo registrazione: {current_state}")
-        else:
-            print(f"[WARNING] Nessuna informazione trovata dopo la registrazione")
-            
-    except ClientError as e:
-        print(f"[ERROR] Errore nella registrazione del target: {e}")
-        raise
-    except ClientError as e:
-        if "TargetAlreadyExists" in str(e):
-            print(f"[INFO] Target {instance_id} già registrato")
-        else:
-            raise
-    
-    if wait_for_health:
-        print(f"[INFO] Attendendo che il target diventi healthy...")
-        waiter = elbv2_client.get_waiter('target_in_service')
-        waiter.wait(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        print(f"[SUCCESS] Target healthy nel Load Balancer")
-    else:
-        print(f"[INFO] Target registrato - health check sarà completato dopo il deployment dell'applicazione")
+    waiter = elbv2_client.get_waiter('target_in_service')
+    waiter.wait(
+        TargetGroupArn=target_group_arn,
+        Targets=[{'Id': instance_id, 'Port': 8080}]
+    )
+    print(f"[SUCCESS] Target healthy nel Load Balancer")
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
     print("\n[SECTION] VPC e Security Groups")
@@ -402,21 +321,27 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
     try:
         nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
         if nlbs['LoadBalancers']:
-            nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
-            elbv2_client.delete_load_balancer(LoadBalancerArn=nlb_arn)
+            elbv2_client.delete_load_balancer(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
+            print(f"[SUCCESS] Network Load Balancer '{NLB_NAME}' eliminato")
             waiter = elbv2_client.get_waiter('load_balancers_deleted')
-            waiter.wait(LoadBalancerArns=[nlb_arn])
+            waiter.wait(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
+            print(f"[SUCCESS] Attesa eliminazione NLB completata")
     except ClientError as e:
         if "LoadBalancerNotFound" not in str(e):
             print(f"[ERROR] NLB: {e}")
+        else:
+            print(f"[INFO] Network Load Balancer '{NLB_NAME}' non trovato (già eliminato)")
 
     try:
         target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
         if target_groups['TargetGroups']:
             elbv2_client.delete_target_group(TargetGroupArn=target_groups['TargetGroups'][0]['TargetGroupArn'])
+            print(f"[SUCCESS] Target Group '{TARGET_GROUP_NAME}' eliminato")
     except ClientError as e:
         if "TargetGroupNotFound" not in str(e):
             print(f"[ERROR] Target Group: {e}")
+        else:
+            print(f"[INFO] Target Group '{TARGET_GROUP_NAME}' non trovato (già eliminato)")
 
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values':['MusicApp']}]
@@ -427,9 +352,13 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
             if instance['State']['Name'] != 'terminated':
                 instance_ids.append(instance['InstanceId'])
     if instance_ids:
+        print(f"[SUCCESS] Terminazione {len(instance_ids)} istanze EC2: {instance_ids}")
         ec2_client.terminate_instances(InstanceIds=instance_ids)
         waiter = ec2_client.get_waiter('instance_terminated')
         waiter.wait(InstanceIds=instance_ids)
+        print(f"[SUCCESS] Attesa terminazione istanze EC2 completata")
+    else:
+        print(f"[INFO] Nessuna istanza EC2 MusicApp da terminare")
 
     if not skip_rds:
         try:
@@ -454,16 +383,21 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
                 ec2_client.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=sg_details['IpPermissions'])
             
             ec2_client.delete_security_group(GroupId=sg_id)
+            print(f"[SUCCESS] Security Group '{sg_name}' eliminato")
         except ClientError as e:
             if "InvalidGroup.NotFound" not in str(e) and "DependencyViolation" not in str(e):
                 print(f"[ERROR] SG {sg_name}: {e}")
+            else:
+                print(f"[INFO] Security Group '{sg_name}' non trovato o ancora in uso")
 
     try:
         ec2_client.delete_key_pair(KeyName=key_name)
+        print(f"[SUCCESS] Key Pair '{key_name}' eliminata da AWS")
         if os.path.exists(f"{key_name}.pem"):
             os.remove(f"{key_name}.pem")
-    except (ClientError, PermissionError):
-        pass
+            print(f"[SUCCESS] File locale '{key_name}.pem' eliminato")
+    except (ClientError, PermissionError) as e:
+        print(f"[INFO] Key Pair '{key_name}' non trovata o file locale non eliminabile")
 
     print("[SUCCESS] Pulizia completata.")
 
@@ -530,28 +464,6 @@ def setup_sns_notification(region, topic_name, email_address):
         print(f"[ERROR] Nella sottoscrizione email SNS: {e}")
         raise
     return topic_arn
-
-def check_target_health(elbv2_client, target_group_arn, instance_id):
-    """Controlla lo stato dell'health check per il target specificato"""
-    try:
-        response = elbv2_client.describe_target_health(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        
-        if response['TargetHealthDescriptions']:
-            health_status = response['TargetHealthDescriptions'][0]['TargetHealth']['State']
-            description = response['TargetHealthDescriptions'][0]['TargetHealth'].get('Description', '')
-            print(f"[INFO] Stato health check del target {instance_id}: {health_status}")
-            if description:
-                print(f"[INFO] Descrizione: {description}")
-            return health_status
-        else:
-            print(f"[WARNING] Nessuna informazione di health check trovata per {instance_id}")
-            return "unknown"
-    except Exception as e:
-        print(f"[ERROR] Errore nel controllo health check: {e}")
-        return "error"
 
 def main():
     if "--clean" in os.sys.argv:
@@ -695,58 +607,9 @@ def main():
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"[SUCCESS] EC2 attivo: {server_public_ip}")
 
-        # Registra sempre l'istanza EC2 corrente al Target Group (nuova o esistente)
-        print(f"\n[STEP] Registrazione EC2 {server_instance_id} al Target Group...")
-        print(f"[DEBUG] Target Group ARN: {target_group_arn}")
-        print(f"[DEBUG] Instance ID: {server_instance_id}")
-        
-        # Verifica che l'istanza sia in running state prima della registrazione
-        instance_details = ec2_client.describe_instances(InstanceIds=[server_instance_id])
-        instance_state = instance_details['Reservations'][0]['Instances'][0]['State']['Name']
-        print(f"[DEBUG] Stato istanza EC2: {instance_state}")
-        
-        if instance_state != 'running':
-            print(f"[INFO] Aspettando che l'istanza sia in running state...")
-            waiter = ec2_client.get_waiter('instance_running')
-            waiter.wait(InstanceIds=[server_instance_id])
-            print(f"[SUCCESS] Istanza ora in running state")
-        
-        # Prima pulisce i target obsoleti se il Target Group esiste
-        clean_obsolete_targets(elbv2_client, ec2_client, target_group_arn, server_instance_id)
-        
-        # Poi registra l'istanza corrente con retry se necessario
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id, wait_for_health=False)
-                break
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    print(f"[WARNING] Tentativo {attempt + 1} fallito: {e}. Riprovo in 5 secondi...")
-                    time.sleep(5)
-                else:
-                    print(f"[ERROR] Tutti i tentativi di registrazione falliti: {e}")
-                    raise
-        
-        # Verifica finale della registrazione
-        print(f"\n[STEP] Verifica finale della registrazione...")
-        try:
-            final_response = elbv2_client.describe_target_health(
-                TargetGroupArn=target_group_arn,
-                Targets=[{'Id': server_instance_id, 'Port': 8080}]
-            )
-            
-            if final_response['TargetHealthDescriptions']:
-                final_state = final_response['TargetHealthDescriptions'][0]['TargetHealth']['State']
-                final_description = final_response['TargetHealthDescriptions'][0]['TargetHealth'].get('Description', '')
-                print(f"[SUCCESS] Target {server_instance_id} registrato con stato: {final_state}")
-                if final_description:
-                    print(f"[INFO] Descrizione: {final_description}")
-            else:
-                print(f"[ERROR] Target non trovato dopo la registrazione!")
-                
-        except Exception as e:
-            print(f"[ERROR] Errore nella verifica finale: {e}")
+        if server_instances_found:
+            server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
+        register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
 
         config = {
             "server_public_ip": server_public_ip,
@@ -764,15 +627,6 @@ def main():
             json.dump(config, f, indent=4)
 
         print("\n[SUCCESS] Configurazione salvata in 'deploy_config.json'.")
-        
-        # Controllo lo stato dell'health check
-        print(f"\n[INFO] Controllo stato health check...")
-        health_status = check_target_health(elbv2_client, target_group_arn, server_instance_id)
-        
-        if health_status == "unhealthy":
-            print(f"[WARNING] Il target è ancora unhealthy - questo è normale se l'applicazione non è stata ancora deployata")
-            print(f"[INFO] L'health check diventerà healthy dopo il deployment dell'applicazione Java")
-
         print("\n[GUIDE] Guida Rapida Deploy Applicazione")
         print("=" * 60)
         print("[1] Aggiorna i segreti GitHub")
