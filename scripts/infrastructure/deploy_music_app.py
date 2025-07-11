@@ -249,42 +249,12 @@ def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
     )
     print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
     
-    # Verifica lo stato del Target Group prima di aspettare
-    try:
-        target_health = elbv2_client.describe_target_health(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        initial_state = target_health['TargetHealthDescriptions'][0]['TargetHealth']['State']
-        print(f"[INFO] Stato iniziale target: {initial_state}")
-        
-        if initial_state == 'unused':
-            print(f"[WARNING] Target Group in stato 'unused' - possibile problema con Load Balancer")
-            print(f"[INFO] Salto l'attesa del health check - verificare manualmente la configurazione")
-            return
-        
-        # Aspetta che l'applicazione sia pronta prima di controllare l'health check
-        print(f"[INFO] Aspettando che l'applicazione sia completamente avviata...")
-        print(f"[INFO] Questo può richiedere fino a 5 minuti per il primo avvio (download dipendenze Maven)")
-        
-        # Solo se il target non è 'unused', aspetta che diventi healthy
-        print(f"[INFO] Attesa che il target diventi healthy...")
-        waiter = elbv2_client.get_waiter('target_in_service')
-        waiter.wait(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}],
-            WaiterConfig={'Delay': 30, 'MaxAttempts': 15}  # 30s * 15 = 7.5 minuti max
-        )
-        print(f"[SUCCESS] Target healthy nel Load Balancer")
-        
-    except ClientError as e:
-        print(f"[ERROR] Problema durante la verifica del target health: {e}")
-        print(f"[INFO] Continuando comunque - verificare manualmente lo stato")
-    except Exception as e:
-        print(f"[WARNING] Timeout o errore nell'attesa del target healthy: {e}")
-        print(f"[INFO] Il server potrebbe richiedere più tempo. Controlla manualmente:")
-        print(f"[INFO] - AWS Console → EC2 → Target Groups → {target_group_arn}")
-        print(f"[INFO] - SSH: docker logs musicapp-server")
+    waiter = elbv2_client.get_waiter('target_in_service')
+    waiter.wait(
+        TargetGroupArn=target_group_arn,
+        Targets=[{'Id': instance_id, 'Port': 8080}]
+    )
+    print(f"[SUCCESS] Target healthy nel Load Balancer")
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
     print("\n[SECTION] VPC e Security Groups")
@@ -351,28 +321,20 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
     try:
         nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
         if nlbs['LoadBalancers']:
-            nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
-            elbv2_client.delete_load_balancer(LoadBalancerArn=nlb_arn)
-            print(f"[SUCCESS] Network Load Balancer '{NLB_NAME}' eliminato")
+            elbv2_client.delete_load_balancer(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
             waiter = elbv2_client.get_waiter('load_balancers_deleted')
-            waiter.wait(LoadBalancerArns=[nlb_arn])
-            print(f"[SUCCESS] Attesa eliminazione NLB completata")
+            waiter.wait(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
     except ClientError as e:
         if "LoadBalancerNotFound" not in str(e):
             print(f"[ERROR] NLB: {e}")
-        else:
-            print(f"[INFO] Network Load Balancer '{NLB_NAME}' non trovato (già eliminato)")
 
     try:
         target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
         if target_groups['TargetGroups']:
             elbv2_client.delete_target_group(TargetGroupArn=target_groups['TargetGroups'][0]['TargetGroupArn'])
-            print(f"[SUCCESS] Target Group '{TARGET_GROUP_NAME}' eliminato")
     except ClientError as e:
         if "TargetGroupNotFound" not in str(e):
             print(f"[ERROR] Target Group: {e}")
-        else:
-            print(f"[INFO] Target Group '{TARGET_GROUP_NAME}' non trovato (già eliminato)")
 
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values':['MusicApp']}]
@@ -383,13 +345,9 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
             if instance['State']['Name'] != 'terminated':
                 instance_ids.append(instance['InstanceId'])
     if instance_ids:
-        print(f"[SUCCESS] Terminazione {len(instance_ids)} istanze EC2: {instance_ids}")
         ec2_client.terminate_instances(InstanceIds=instance_ids)
         waiter = ec2_client.get_waiter('instance_terminated')
         waiter.wait(InstanceIds=instance_ids)
-        print(f"[SUCCESS] Attesa terminazione istanze EC2 completata")
-    else:
-        print(f"[INFO] Nessuna istanza EC2 MusicApp da terminare")
 
     if not skip_rds:
         try:
@@ -414,21 +372,16 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
                 ec2_client.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=sg_details['IpPermissions'])
             
             ec2_client.delete_security_group(GroupId=sg_id)
-            print(f"[SUCCESS] Security Group '{sg_name}' eliminato")
         except ClientError as e:
             if "InvalidGroup.NotFound" not in str(e) and "DependencyViolation" not in str(e):
                 print(f"[ERROR] SG {sg_name}: {e}")
-            else:
-                print(f"[INFO] Security Group '{sg_name}' non trovato o ancora in uso")
 
     try:
         ec2_client.delete_key_pair(KeyName=key_name)
-        print(f"[SUCCESS] Key Pair '{key_name}' eliminata da AWS")
         if os.path.exists(f"{key_name}.pem"):
             os.remove(f"{key_name}.pem")
-            print(f"[SUCCESS] File locale '{key_name}.pem' eliminato")
-    except (ClientError, PermissionError) as e:
-        print(f"[INFO] Key Pair '{key_name}' non trovata o file locale non eliminabile")
+    except (ClientError, PermissionError):
+        pass
 
     print("[SUCCESS] Pulizia completata.")
 
@@ -640,52 +593,7 @@ def main():
 
         if server_instances_found:
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
-        
-        # Verifica la configurazione del Load Balancer prima della registrazione
-        try:
-            nlb_details = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
-            nlb_state = nlb_details['LoadBalancers'][0]['State']['Code']
-            print(f"[INFO] Stato Network Load Balancer: {nlb_state}")
-            
-            listeners = elbv2_client.describe_listeners(LoadBalancerArn=nlb_arn)
-            if listeners['Listeners']:
-                listener_tg = listeners['Listeners'][0]['DefaultActions'][0].get('TargetGroupArn')
-                if listener_tg == target_group_arn:
-                    print(f"[SUCCESS] Listener correttamente collegato al Target Group")
-                else:
-                    print(f"[WARNING] Listener punta a Target Group diverso: {listener_tg}")
-            else:
-                print(f"[WARNING] Nessun listener trovato per il Load Balancer")
-                
-        except Exception as e:
-            print(f"[WARNING] Errore nella verifica Load Balancer: {e}")
-        
         register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
-        
-        # Aspetta che l'applicazione sia completamente avviata prima di registrare nel Target Group
-        print(f"[INFO] Aspettando che l'applicazione sia completamente avviata...")
-        time.sleep(30)  # Aspetta 30 secondi per permettere al server di avviarsi
-        
-        # Verifica che l'applicazione risponda sulla porta 8080
-        import socket
-        max_retries = 10
-        for i in range(max_retries):
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(5)
-                result = sock.connect_ex((server_public_ip, 8080))
-                sock.close()
-                if result == 0:
-                    print(f"[SUCCESS] Applicazione risponde sulla porta 8080 (tentativo {i+1}/{max_retries})")
-                    break
-                else:
-                    print(f"[INFO] Applicazione non ancora pronta, tentativo {i+1}/{max_retries}")
-                    time.sleep(15)
-            except Exception as e:
-                print(f"[INFO] Verifica connessione fallita: {e}, tentativo {i+1}/{max_retries}")
-                time.sleep(15)
-        else:
-            print(f"[WARNING] Applicazione potrebbe non essere ancora pronta dopo {max_retries} tentativi")
 
         config = {
             "server_public_ip": server_public_ip,
