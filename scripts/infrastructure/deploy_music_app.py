@@ -88,10 +88,54 @@ def get_key_pair(ec2_client, key_name):
         else:
             raise
 
+def create_target_group(elbv2_client, vpc_id):
+    """Crea o ottiene un Target Group esistente"""
+    target_group_config = {
+        'Name': TARGET_GROUP_NAME,
+        'Protocol': 'TCP',
+        'Port': 8080,
+        'VpcId': vpc_id,
+        'TargetType': 'instance',
+        'HealthCheckProtocol': 'TCP',
+        'HealthCheckPort': '8080',
+        'HealthCheckIntervalSeconds': 30,
+        'HealthCheckTimeoutSeconds': 10,
+        'HealthyThresholdCount': 2,
+        'UnhealthyThresholdCount': 5,
+        'Tags': [
+            {'Key': 'Name', 'Value': TARGET_GROUP_NAME},
+            {'Key': 'Application', 'Value': 'MusicApp'}
+        ]
+    }
+    
+    try:
+        target_group_response = elbv2_client.create_target_group(**target_group_config)
+        target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
+        print(f"[SUCCESS] Target Group creato: {TARGET_GROUP_NAME}")
+        return target_group_arn
+    except ClientError as e:
+        if 'DuplicateTargetGroupName' in str(e):
+            target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
+            existing_tg = target_groups['TargetGroups'][0]
+            target_group_arn = existing_tg['TargetGroupArn']
+            print(f"[INFO] Target Group esistente: {TARGET_GROUP_NAME}")
+            
+            # Ricrea solo se il protocollo non è TCP
+            if existing_tg['Protocol'] != 'TCP':
+                elbv2_client.delete_target_group(TargetGroupArn=target_group_arn)
+                target_group_response = elbv2_client.create_target_group(**target_group_config)
+                target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
+                print(f"[SUCCESS] Target Group ricreato: {TARGET_GROUP_NAME}")
+            
+            return target_group_arn
+        else:
+            raise
+
 def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_id, ec2_security_group_id):
     print("\n[SECTION] Network Load Balancer Setup")
     print("-" * 50)
     
+    # Ottieni subnet IDs
     subnets_response = ec2_client.describe_subnets(
         Filters=[
             {'Name': 'vpc-id', 'Values': [vpc_id]},
@@ -108,6 +152,7 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
     
     nlb_subnet_ids = subnet_ids[:2]
 
+    # Autorizza traffico per Security Group
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=ec2_security_group_id,
@@ -124,58 +169,10 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
         if 'InvalidPermission.Duplicate' not in str(e):
             raise
 
-    target_group_arn = None
-    try:
-        target_group_response = elbv2_client.create_target_group(
-            Name=TARGET_GROUP_NAME,
-            Protocol='TCP',
-            Port=8080,
-            VpcId=vpc_id,
-            TargetType='instance',
-            HealthCheckProtocol='TCP',
-            HealthCheckPort='8080',
-            HealthCheckIntervalSeconds=60,# ogni 60 secondi si connettere alla ec2server per controllare
-            HealthCheckTimeoutSeconds=10,
-            HealthyThresholdCount=3,
-            UnhealthyThresholdCount=3,
-            Tags=[
-                {'Key': 'Name', 'Value': TARGET_GROUP_NAME},
-                {'Key': 'Application', 'Value': 'MusicApp'}
-            ]
-        )
-        target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
-        print(f"[SUCCESS] Target Group creato: {TARGET_GROUP_NAME}")
-    except ClientError as e:
-        if 'DuplicateTargetGroupName' in str(e):
-            target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
-            existing_tg = target_groups['TargetGroups'][0]
-            target_group_arn = existing_tg['TargetGroupArn']
-            print(f"[INFO] Target Group esistente: {TARGET_GROUP_NAME}")
-            
-            if existing_tg['Protocol'] != 'TCP':
-                elbv2_client.delete_target_group(TargetGroupArn=target_group_arn)
-                target_group_response = elbv2_client.create_target_group(
-                    Name=TARGET_GROUP_NAME,
-                    Protocol='TCP',
-                    Port=8080,
-                    VpcId=vpc_id,
-                    TargetType='instance',
-                    HealthCheckProtocol='TCP',
-                    HealthCheckPort='8080',
-                    HealthCheckIntervalSeconds=60,
-                    HealthCheckTimeoutSeconds=10,
-                    HealthyThresholdCount=3,
-                    UnhealthyThresholdCount=3,
-                    Tags=[
-                        {'Key': 'Name', 'Value': TARGET_GROUP_NAME},
-                        {'Key': 'Application', 'Value': 'MusicApp'}
-                    ]
-                )
-                target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
-                print(f"[SUCCESS] Target Group ricreato: {TARGET_GROUP_NAME}")
-        else:
-            raise
+    # Crea Target Group
+    target_group_arn = create_target_group(elbv2_client, vpc_id)
 
+    # Crea Network Load Balancer
     try:
         nlb_response = elbv2_client.create_load_balancer(
             Name=NLB_NAME,
@@ -200,11 +197,13 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
         else:
             raise
 
+    # Attendi che il NLB sia disponibile
     waiter = elbv2_client.get_waiter('load_balancer_available')
     waiter.wait(LoadBalancerArns=[nlb_arn])
 
+    # Crea Listener
     try:
-        listener_response = elbv2_client.create_listener(
+        elbv2_client.create_listener(
             LoadBalancerArn=nlb_arn,
             Protocol='TCP',
             Port=8080,
@@ -215,18 +214,16 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
                 }
             ]
         )
-        listener_arn = listener_response['Listeners'][0]['ListenerArn']
         print(f"[SUCCESS] Listener creato sulla porta 8080")
     except ClientError as e:
         if 'DuplicateListener' in str(e):
             listeners = elbv2_client.describe_listeners(LoadBalancerArn=nlb_arn)
             if listeners['Listeners']:
                 existing_listener = listeners['Listeners'][0]
-                listener_arn = existing_listener['ListenerArn']
                 current_target_group = existing_listener['DefaultActions'][0].get('TargetGroupArn')
                 if current_target_group != target_group_arn:
                     elbv2_client.modify_listener(
-                        ListenerArn=listener_arn,
+                        ListenerArn=existing_listener['ListenerArn'],
                         DefaultActions=[
                             {
                                 'Type': 'forward',
@@ -242,19 +239,79 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
 
     return nlb_arn, nlb_dns_name, target_group_arn
 
-def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
+def wait_for_server_ready(timeout_minutes=12):
+    """Attesa semplificata per il setup del server"""
+    print(f"\n[SECTION] Attesa Setup Server (max {timeout_minutes} minuti)")
+    print("-" * 50)
+    
+    print(f"[INFO] Attendendo che il server completi il setup...")
+    print(f"[INFO] Timeout: {timeout_minutes} minuti")
+    
+    # Attesa progressiva semplificata
+    total_wait = timeout_minutes * 60
+    intervals = [30, 60, 90]  # Intervalli crescenti
+    
+    elapsed = 0
+    interval_idx = 0
+    
+    while elapsed < total_wait:
+        current_interval = intervals[min(interval_idx, len(intervals) - 1)]
+        remaining = (total_wait - elapsed) / 60
+        
+        print(f"[INFO] Tempo trascorso: {elapsed/60:.1f}min - Rimanente: {remaining:.1f}min")
+        time.sleep(current_interval)
+        
+        elapsed += current_interval
+        interval_idx += 1
+    
+    print(f"[INFO] Attesa terminata. Procedo con la registrazione nel Target Group")
+
+def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id, wait_for_health=True):
+    """Registra EC2 nel Target Group con health check ottimizzato"""
+    print(f"\n[SECTION] Registrazione EC2 nel Target Group")
+    print("-" * 50)
+    
     elbv2_client.register_targets(
         TargetGroupArn=target_group_arn,
         Targets=[{'Id': instance_id, 'Port': 8080}]
     )
     print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
     
-    waiter = elbv2_client.get_waiter('target_in_service')
-    waiter.wait(
-        TargetGroupArn=target_group_arn,
-        Targets=[{'Id': instance_id, 'Port': 8080}]
-    )
-    print(f"[SUCCESS] Target healthy nel Load Balancer")
+    if not wait_for_health:
+        print(f"[INFO] Salto l'attesa per lo stato healthy")
+        return
+    
+    print(f"[INFO] Attendo che il target diventi healthy...")
+    
+    max_wait_time = 600  # 10 minuti (ridotto da 15)
+    check_interval = 30
+    start_time = time.time()
+    
+    while (time.time() - start_time) < max_wait_time:
+        try:
+            target_health = elbv2_client.describe_target_health(
+                TargetGroupArn=target_group_arn,
+                Targets=[{'Id': instance_id, 'Port': 8080}]
+            )
+            
+            health_state = target_health['TargetHealthDescriptions'][0]['TargetHealth']['State']
+            elapsed_minutes = (time.time() - start_time) / 60
+            
+            print(f"[INFO] Stato target: {health_state} - Tempo: {elapsed_minutes:.1f}min")
+            
+            if health_state == 'healthy':
+                print(f"[SUCCESS] Target healthy nel Load Balancer!")
+                return
+            elif health_state in ['initial', 'unhealthy']:
+                print(f"[INFO] Target in fase di inizializzazione/timeout...")
+            
+            time.sleep(check_interval)
+            
+        except Exception as e:
+            print(f"[WARNING] Errore nel controllo health: {e}")
+            time.sleep(check_interval)
+    
+    print(f"[INFO] Timeout raggiunto - controlla stato manualmente")
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
     print("\n[SECTION] VPC e Security Groups")
@@ -387,33 +444,39 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
 
 
 def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_sql, data_sql):
+    """Inizializza database RDS con retry semplificato"""
     print("\n[SECTION] Inizializzazione Database RDS")
     print("-" * 50)
 
+    # Connessione al database postgres predefinito
     conn_str = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
     
-    for i in range(3):
+    # Retry semplificato
+    for attempt in range(3):
         try:
             conn = psycopg2.connect(conn_str)
             conn.autocommit = True
             break
-        except psycopg2.OperationalError:
-            if i < 2:
-                time.sleep(10)
-            else:
-                raise Exception("Impossibile connettersi al database PostgreSQL")
+        except psycopg2.OperationalError as e:
+            if attempt == 2:
+                raise Exception(f"Impossibile connettersi al database PostgreSQL: {e}")
+            print(f"[INFO] Tentativo {attempt + 1} fallito, riprovo in 10 secondi...")
+            time.sleep(10)
 
+    # Crea database dell'applicazione
     cur = conn.cursor()
     cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
     cur.execute(f"CREATE DATABASE {db_name};")
     cur.close()
     conn.close()
 
+    # Connessione al database dell'applicazione
     conn_str_app = f"dbname={db_name} user={db_username} password={db_password} host={rds_endpoint} port=5432"
     conn_app = psycopg2.connect(conn_str_app)
     conn_app.autocommit = True
     cur_app = conn_app.cursor()
     
+    # Esegui schema e dati
     cur_app.execute(schema_sql)
     cur_app.execute(data_sql)
     
@@ -427,35 +490,71 @@ def get_account_id():
     return sts.get_caller_identity()['Account']
 
 def setup_sns_notification(region, topic_name, email_address):
+    """Setup SNS per notifiche (semplificato)"""
     print("\n[SECTION] Notifiche SNS")
     print("-" * 50)
 
     sns_client = boto3.client('sns', region_name=region)
-    topic_arn = None
+    
     try:
         response = sns_client.create_topic(Name=topic_name)
         topic_arn = response['TopicArn']
         print(f"[SUCCESS] SNS topic creato: {topic_arn}")
-    except Exception as e:
-        print(f"[ERROR] Nella creazione del topic SNS: {e}")
-        raise
-
-    try:
+        
         sns_client.subscribe(TopicArn=topic_arn, Protocol='email', Endpoint=email_address)
-        print(f"[SUCCESS] Sottoscrizione email {email_address} al topic SNS completata.")
-        print(f"[INFO] Conferma la sottoscrizione tramite il link che riceverai via email.")
+        print(f"[SUCCESS] Email {email_address} sottoscritta al topic")
+        print(f"[INFO] Conferma la sottoscrizione via email")
+        
+        return topic_arn
     except Exception as e:
-        print(f"[ERROR] Nella sottoscrizione email SNS: {e}")
-        raise
-    return topic_arn
+        print(f"[WARNING] Errore SNS: {e}")
+        print(f"[INFO] Continuo senza notifiche SNS")
+        return None
 
 def main():
+    # Controllo argomenti della linea di comando
     if "--clean" in os.sys.argv:
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
         elbv2 = boto3.client('elbv2', region_name=REGION)
         skip_rds = "--nords" in os.sys.argv
         delete_resources(ec2, rds, elbv2, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup', skip_rds)
+        return
+
+    # Opzione per registrare rapidamente un'istanza esistente nel Load Balancer
+    if "--quick-register" in os.sys.argv:
+        print("\n[SECTION] Registrazione Rapida nel Load Balancer")
+        print("-" * 50)
+        
+        elbv2_client = boto3.client('elbv2', region_name=REGION)
+        ec2_client = boto3.client('ec2', region_name=REGION)
+        
+        # Trova il Target Group esistente
+        try:
+            target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
+            target_group_arn = target_groups['TargetGroups'][0]['TargetGroupArn']
+            
+            # Trova l'istanza EC2 MusicAppServer
+            server_instances = ec2_client.describe_instances(
+                Filters=[
+                    {'Name': 'tag:Name', 'Values':['MusicAppServer']},
+                    {'Name': 'instance-state-name', 'Values':['running']}
+                ]
+            )['Reservations']
+            
+            if not server_instances:
+                print("[ERROR] Nessuna istanza EC2 'MusicAppServer' in running trovata")
+                return
+            
+            server_instance_id = server_instances[0]['Instances'][0]['InstanceId']
+            print(f"[INFO] Registrazione istanza {server_instance_id} nel Target Group...")
+            
+            # Registra immediatamente senza attendere la notifica SNS
+            register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id, wait_for_health=True)
+            
+        except Exception as e:
+            print(f"[ERROR] Errore durante la registrazione rapida: {e}")
+        
         return
 
 
@@ -540,10 +639,10 @@ def main():
             ec2_client, elbv2_client, vpc_id, ec2_security_group_id
         )
 
-        # 6. setup SNS notification e modifico user_data_script
+        # 6. Setup SNS e user_data_script
         topic_name = 'musicapp-server-setup-complete'
         email_address = 'lorenzopaoria@icloud.com'
-        topic_arn = setup_sns_notification(REGION, topic_name, email_address)
+        setup_sns_notification(REGION, topic_name, email_address)  # Rimuovi topic_arn inutilizzato
         
         script_dir = os.path.dirname(os.path.abspath(__file__))
         user_data_script_path = os.path.join(script_dir, 'user_data_script.sh')
@@ -593,6 +692,18 @@ def main():
 
         if server_instances_found:
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
+        
+        # Controlla se saltare l'attesa SNS
+        skip_sns_wait = "--no-wait" in os.sys.argv
+        
+        if not skip_sns_wait:
+            print(f"[INFO] Attendo il completamento del setup del server...")
+            print(f"[INFO] Per saltare questa attesa, usa il flag --no-wait")
+            wait_for_server_ready(timeout_minutes=12)
+        else:
+            print(f"[INFO] Salto l'attesa SNS (flag --no-wait specificato)")
+        
+        # Ora registra nel Target Group con health check ottimizzato
         register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
 
         config = {
@@ -630,6 +741,23 @@ def main():
         print("")
         print("[5] Log del container Docker del server:")
         print("    docker logs -f musicapp-server")
+        print("")
+        print("[TROUBLESHOOTING] Comandi Utili")
+        print("-" * 40)
+        print("• Controllo stato Target Group:")
+        print(f"    aws elbv2 describe-target-health --target-group-arn [TARGET_GROUP_ARN]")
+        print("")
+        print("• Registrazione rapida nel Load Balancer:")
+        print("    python scripts/infrastructure/deploy_music_app.py --quick-register")
+        print("")
+        print("• Deploy senza attesa SNS:")
+        print("    python scripts/infrastructure/deploy_music_app.py --no-wait")
+        print("")
+        print("• Controllo stato container Docker su EC2:")
+        print("    docker ps && docker logs musicapp-server")
+        print("")
+        print("• Test connettività alla porta 8080:")
+        print("    curl -f http://localhost:8080/")
         print("=" * 60)
 
     except ClientError as e:
