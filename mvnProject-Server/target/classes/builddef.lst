@@ -1,0 +1,26 @@
+-Xajruntimetarget:1.5
+-11
+-encoding
+UTF-8
+-source
+11
+-target
+11
+-classpath
+C:\Users\luisa\.m2\repository\org\postgresql\postgresql\42.7.3\postgresql-42.7.3.jar;C:\Users\luisa\.m2\repository\com\formdev\flatlaf\3.2\flatlaf-3.2.jar;C:\Users\luisa\.m2\repository\com\zaxxer\HikariCP\5.0.1\HikariCP-5.0.1.jar;C:\Users\luisa\.m2\repository\org\slf4j\slf4j-api\1.7.36\slf4j-api-1.7.36.jar;C:\Users\luisa\.m2\repository\ch\qos\logback\logback-classic\1.2.11\logback-classic-1.2.11.jar;C:\Users\luisa\.m2\repository\ch\qos\logback\logback-core\1.2.11\logback-core-1.2.11.jar;C:\Users\luisa\.m2\repository\org\aspectj\aspectjrt\1.9.7\aspectjrt-1.9.7.jar;C:\Users\luisa\.m2\repository\org\aspectj\aspectjweaver\1.9.7\aspectjweaver-1.9.7.jar;C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\target\classes
+-d
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\target\classes
+-s
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\target\generated-sources\aspectj-maven-plugin
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\config\DatabaseConfig.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\dao\UserDAO.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\DatabaseServer.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\factory\DatabaseFactory.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\factory\DatabaseProxyFactory.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\logging\DatabaseAuditAspect.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\logging\DatabaseAuditLogger.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\proxy\DatabaseProxy.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\proxy\IDatabaseProxy.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\rbac\Permission.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\rbac\Role.java
+C:\Users\luisa\OneDrive - Università degli Studi di Catania\UniCt\Magistrale\Primo anno\Sistemi cloud\Music-Databese-Query-App-for-Distributed-Systems-on-Cloud\mvnProject-Server\src\main\java\com\example\session\Session.java

@@ -39,7 +39,7 @@ jobs:
             if [ ! -d "/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud" ]; then
               echo "Clonando il repository..."
               cd /home/ec2-user
-              git clone https://github.com/YOUR_USERNAME/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git
+              git clone https://github.com/lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git
             fi
             
             # entra nella directory del progetto
