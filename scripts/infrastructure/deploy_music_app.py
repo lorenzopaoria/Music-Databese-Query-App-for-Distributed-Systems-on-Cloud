@@ -4,7 +4,6 @@ import os
 import psycopg2
 import json
 import configparser
-import time
 from botocore.exceptions import ClientError
 
 # configurazione AWS
@@ -73,31 +72,26 @@ def update_user_data_with_credentials(user_data_script, credentials):
     return updated_script
 
 def get_key_pair(ec2_client, key_name):
-
     print("\n[SECTION] Gestione Chiave EC2")
     print("-" * 50)
     try:
         response = ec2_client.describe_key_pairs(KeyNames=[key_name])
-        print(f"[INFO] La chiave EC2 '{key_name}' è già presente nel tuo account AWS.")
         return response['KeyPairs'][0]['KeyName']
     except ClientError as e:
         if "InvalidKeyPair.NotFound" in str(e):
-            print(f"[INFO] La chiave EC2 '{key_name}' non è stata trovata. Avvio della creazione...")
             key_pair = ec2_client.create_key_pair(KeyName=key_name)
             with open(f"{key_name}.pem", "w") as f:
                 f.write(key_pair['KeyMaterial'])
             os.chmod(f"{key_name}.pem", 0o400)
-            print(f"[SUCCESS] File '{key_name}.pem' creato e salvato localmente.")
+            print(f"[SUCCESS] Chiave '{key_name}.pem' creata.")
             return key_pair['KeyName']
         else:
             raise
 
 def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_id, ec2_security_group_id):
-    """Crea Network Load Balancer e Target Group"""
     print("\n[SECTION] Network Load Balancer Setup")
     print("-" * 50)
     
-    # Ottieni le subnet pubbliche per l'NLB
     subnets_response = ec2_client.describe_subnets(
         Filters=[
             {'Name': 'vpc-id', 'Values': [vpc_id]},
@@ -107,36 +101,13 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
     subnet_ids = [subnet['SubnetId'] for subnet in subnets_response['Subnets']]
     
     if len(subnet_ids) < 2:
-        print("[WARNING] Meno di 2 subnet pubbliche disponibili. L'NLB richiede almeno 2 AZ.")
-        # Ottieni tutte le subnet se non ci sono abbastanza subnet pubbliche
         subnets_response = ec2_client.describe_subnets(
             Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
         )
         subnet_ids = [subnet['SubnetId'] for subnet in subnets_response['Subnets']]
     
-    # Prendi solo le prime 2 subnet per l'NLB
     nlb_subnet_ids = subnet_ids[:2]
-    print(f"[INFO] Subnet selezionate per NLB: {nlb_subnet_ids}")
 
-    # NLB non ha bisogno di Security Group - usa quello dell'EC2
-    # Rimuovi regola di accesso diretto alla porta 8080 da 0.0.0.0/0 se esiste
-    try:
-        ec2_sg_rules = ec2_client.describe_security_groups(GroupIds=[ec2_security_group_id])
-        for rule in ec2_sg_rules['SecurityGroups'][0]['IpPermissions']:
-            if (rule.get('FromPort') == 8080 and rule.get('ToPort') == 8080 and 
-                rule.get('IpRanges') and any(ip.get('CidrIp') == '0.0.0.0/0' for ip in rule['IpRanges'])):
-                try:
-                    ec2_client.revoke_security_group_ingress(
-                        GroupId=ec2_security_group_id,
-                        IpPermissions=[rule]
-                    )
-                    print("[INFO] Rimossa regola di accesso diretto alla porta 8080 da 0.0.0.0/0")
-                except ClientError:
-                    pass
-    except ClientError:
-        pass
-
-    # Aggiungi regola per accettare traffico dalla VPC (NLB usa gli IP delle subnet)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=ec2_security_group_id,
@@ -149,14 +120,10 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
                 }
             ]
         )
-        print("[SUCCESS] Regola aggiunta per traffico NLB->EC2 sulla porta 8080")
     except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("[INFO] Regola NLB->EC2 già presente")
-        else:
+        if 'InvalidPermission.Duplicate' not in str(e):
             raise
 
-    # Crea Target Group per NLB
     target_group_arn = None
     try:
         target_group_response = elbv2_client.create_target_group(
@@ -167,7 +134,7 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
             TargetType='instance',
             HealthCheckProtocol='TCP',
             HealthCheckPort='8080',
-            HealthCheckIntervalSeconds=30,
+            HealthCheckIntervalSeconds=60,# ogni 60 secondi si connettere alla ec2server per controllare
             HealthCheckTimeoutSeconds=10,
             HealthyThresholdCount=3,
             UnhealthyThresholdCount=3,
@@ -177,24 +144,16 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
             ]
         )
         target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
-        print(f"[SUCCESS] Target Group creato: {target_group_arn}")
+        print(f"[SUCCESS] Target Group creato: {TARGET_GROUP_NAME}")
     except ClientError as e:
         if 'DuplicateTargetGroupName' in str(e):
-            # Verifica se il Target Group esistente è compatibile con NLB
             target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
             existing_tg = target_groups['TargetGroups'][0]
             target_group_arn = existing_tg['TargetGroupArn']
+            print(f"[INFO] Target Group esistente: {TARGET_GROUP_NAME}")
             
-            # Controlla se il protocollo è compatibile con NLB
             if existing_tg['Protocol'] != 'TCP':
-                print(f"[WARNING] Target Group esistente usa protocollo {existing_tg['Protocol']} incompatibile con NLB")
-                print("[INFO] Eliminazione e ricreazione del Target Group...")
-                
-                # Elimina il Target Group esistente
                 elbv2_client.delete_target_group(TargetGroupArn=target_group_arn)
-                print("[INFO] Target Group incompatibile eliminato")
-                
-                # Ricrea con il protocollo corretto
                 target_group_response = elbv2_client.create_target_group(
                     Name=TARGET_GROUP_NAME,
                     Protocol='TCP',
@@ -203,7 +162,7 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
                     TargetType='instance',
                     HealthCheckProtocol='TCP',
                     HealthCheckPort='8080',
-                    HealthCheckIntervalSeconds=30,
+                    HealthCheckIntervalSeconds=60,
                     HealthCheckTimeoutSeconds=10,
                     HealthyThresholdCount=3,
                     UnhealthyThresholdCount=3,
@@ -213,13 +172,10 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
                     ]
                 )
                 target_group_arn = target_group_response['TargetGroups'][0]['TargetGroupArn']
-                print(f"[SUCCESS] Target Group ricreato con protocollo TCP: {target_group_arn}")
-            else:
-                print(f"[INFO] Target Group già esistente e compatibile: {target_group_arn}")
+                print(f"[SUCCESS] Target Group ricreato: {TARGET_GROUP_NAME}")
         else:
             raise
 
-    # Crea Network Load Balancer
     try:
         nlb_response = elbv2_client.create_load_balancer(
             Name=NLB_NAME,
@@ -234,25 +190,19 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
         )
         nlb_arn = nlb_response['LoadBalancers'][0]['LoadBalancerArn']
         nlb_dns_name = nlb_response['LoadBalancers'][0]['DNSName']
-        print(f"[SUCCESS] Network Load Balancer creato: {nlb_arn}")
-        print(f"[INFO] NLB DNS Name: {nlb_dns_name}")
+        print(f"[SUCCESS] Network Load Balancer creato: {nlb_dns_name}")
     except ClientError as e:
         if 'DuplicateLoadBalancerName' in str(e):
             nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
             nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
             nlb_dns_name = nlbs['LoadBalancers'][0]['DNSName']
-            print(f"[INFO] Network Load Balancer già esistente: {nlb_arn}")
-            print(f"[INFO] NLB DNS Name: {nlb_dns_name}")
+            print(f"[INFO] Network Load Balancer esistente: {nlb_dns_name}")
         else:
             raise
 
-    # Attendi che l'NLB sia attivo
-    print("[INFO] Attesa che l'NLB diventi attivo...")
     waiter = elbv2_client.get_waiter('load_balancer_available')
     waiter.wait(LoadBalancerArns=[nlb_arn])
-    print("[SUCCESS] NLB è ora attivo")
 
-    # Crea Listener per l'NLB
     try:
         listener_response = elbv2_client.create_listener(
             LoadBalancerArn=nlb_arn,
@@ -266,19 +216,15 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
             ]
         )
         listener_arn = listener_response['Listeners'][0]['ListenerArn']
-        print(f"[SUCCESS] Listener creato: {listener_arn}")
+        print(f"[SUCCESS] Listener creato sulla porta 8080")
     except ClientError as e:
         if 'DuplicateListener' in str(e):
-            # Verifica se il listener esistente punta al Target Group corretto
             listeners = elbv2_client.describe_listeners(LoadBalancerArn=nlb_arn)
             if listeners['Listeners']:
                 existing_listener = listeners['Listeners'][0]
                 listener_arn = existing_listener['ListenerArn']
-                
-                # Controlla se il listener punta al Target Group corretto
                 current_target_group = existing_listener['DefaultActions'][0].get('TargetGroupArn')
                 if current_target_group != target_group_arn:
-                    print("[INFO] Aggiornamento del listener per utilizzare il Target Group corretto...")
                     elbv2_client.modify_listener(
                         ListenerArn=listener_arn,
                         DefaultActions=[
@@ -288,51 +234,36 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
                             }
                         ]
                     )
-                    print(f"[SUCCESS] Listener aggiornato per utilizzare il Target Group: {target_group_arn}")
+                    print(f"[SUCCESS] Listener aggiornato")
                 else:
-                    print(f"[INFO] Listener già esistente e corretto: {listener_arn}")
-            else:
-                raise Exception("Nessun listener trovato nonostante l'errore DuplicateListener")
-        elif 'IncompatibleProtocols' in str(e):
-            print("[ERROR] Protocolli incompatibili rilevati. Questo dovrebbe essere stato risolto con il Target Group ricreato.")
-            print(f"[INFO] Target Group ARN utilizzato: {target_group_arn}")
-            raise
+                    print(f"[INFO] Listener esistente sulla porta 8080")
         else:
             raise
 
     return nlb_arn, nlb_dns_name, target_group_arn
 
 def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
-    """Registra l'istanza EC2 nel Target Group senza attendere l'health check"""
-    print(f"\n[STEP] Registrazione istanza {instance_id} nel Target Group...")
-    try:
-        elbv2_client.register_targets(
-            TargetGroupArn=target_group_arn,
-            Targets=[
-                {
-                    'Id': instance_id,
-                    'Port': 8080
-                }
-            ]
-        )
-        print(f"[SUCCESS] Istanza {instance_id} registrata nel Target Group")
-        print(f"[INFO] L'istanza dovrebbe diventare healthy automaticamente")
-        print(f"[INFO] Verifica lo stato nella console AWS se necessario")
-        
-    except ClientError as e:
-        print(f"[ERROR] Errore nella registrazione del target: {e}")
-        raise
+    elbv2_client.register_targets(
+        TargetGroupArn=target_group_arn,
+        Targets=[{'Id': instance_id, 'Port': 8080}]
+    )
+    print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
+    
+    waiter = elbv2_client.get_waiter('target_in_service')
+    waiter.wait(
+        TargetGroupArn=target_group_arn,
+        Targets=[{'Id': instance_id, 'Port': 8080}]
+    )
+    print(f"[SUCCESS] Target healthy nel Load Balancer")
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
-
     print("\n[SECTION] VPC e Security Groups")
     print("-" * 50)
-    # VPC di default
+    
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values':['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
-    print(f"[INFO] VPC di default individuata: {vpc_id}")
+    print(f"[INFO] VPC di default: {vpc_id}")
 
-    # creazione Security Group per RDS
     try:
         rds_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppRDSSecurityGroup',
@@ -340,17 +271,14 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
             VpcId=vpc_id
         )
         rds_security_group_id = rds_sg_response['GroupId']
-        print(f"[SUCCESS] Security Group per RDS creata con ID: {rds_security_group_id}")
+        print(f"[SUCCESS] Security Group RDS creato: {rds_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             rds_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppRDSSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            print(f"[INFO] Security Group per RDS già esistente: {rds_security_group_id}")
-        else:
-            raise
+            print(f"[INFO] Security Group RDS esistente: {rds_security_group_id}")
 
-    # creazione Security Group per EC2
     try:
         ec2_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppEC2SecurityGroup',
@@ -358,339 +286,140 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
             VpcId=vpc_id
         )
         ec2_security_group_id = ec2_sg_response['GroupId']
-        print(f"[SUCCESS] Security Group per EC2 creata con ID: {ec2_security_group_id}")
+        print(f"[SUCCESS] Security Group EC2 creato: {ec2_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
             ec2_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppEC2SecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
-            print(f"[INFO] Security Group per EC2 già esistente: {ec2_security_group_id}")
-        else:
-            raise
+            print(f"[INFO] Security Group EC2 esistente: {ec2_security_group_id}")
 
-    # autorizzazioni per SG RDS (da EC2 SG)
-    try:
-        ec2_client.authorize_security_group_ingress(
-            GroupId=rds_security_group_id,
-            IpPermissions=[
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 5432, # Porta PostgreSQL
-                    'ToPort': 5432,
-                    'UserIdGroupPairs':[{'GroupId': ec2_security_group_id}]
-                }
-            ]
-        )
-        print("[SUCCESS] Regola di ingresso per RDS autorizzata dal Security Group EC2.")
-    except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("[INFO] Regola di ingresso per RDS già presente (EC2->RDS).")
-        else:
-            raise
-
-    # autorizzazioni per SG RDS da macchina locale (solo per inizializzazione DB, sviluppo)
-    try:
-        ec2_client.authorize_security_group_ingress(
-            GroupId=rds_security_group_id,
-            IpPermissions=[
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 5432, # Porta PostgreSQL
-                    'ToPort': 5432,
-                    'IpRanges':[{'CidrIp': '0.0.0.0/0', 'Description': 'Consenti accesso script locale per init DB (solo sviluppo)'}]
-                }
-            ]
-        )
-        print("[SUCCESS] Regola di ingresso per RDS autorizzata da 0.0.0.0/0 per inizializzazione locale.")
-    except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("[INFO] Regola di ingresso per RDS già presente (0.0.0.0/0->RDS).")
-        else:
-            raise
-            
-    # autorizzazioni per EC2 (SSH e porta app)
-    try:
-        ec2_client.authorize_security_group_ingress(
-            GroupId=ec2_security_group_id,
-            IpPermissions=[
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 22, # SSH
-                    'ToPort': 22,
-                    'IpRanges':[{'CidrIp': '0.0.0.0/0'}]
-                },
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 8080, # porta app
-                    'ToPort': 8080,
-                    'IpRanges':[{'CidrIp': '0.0.0.0/0'}]
-                }
-            ]
-        )
-        print("[SUCCESS] Regole di ingresso per EC2 autorizzate per SSH e applicazione.")
-    except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("[INFO] Regole di ingresso per EC2 già presenti.")
-        else:
-            raise
+    permissions = [
+        (rds_security_group_id, [
+            {'IpProtocol': 'tcp', 'FromPort': 5432, 'ToPort': 5432, 'UserIdGroupPairs':[{'GroupId': ec2_security_group_id}]},
+            {'IpProtocol': 'tcp', 'FromPort': 5432, 'ToPort': 5432, 'IpRanges':[{'CidrIp': '0.0.0.0/0'}]}
+        ]),
+        (ec2_security_group_id, [
+            {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges':[{'CidrIp': '0.0.0.0/0'}]},
+            {'IpProtocol': 'tcp', 'FromPort': 8080, 'ToPort': 8080, 'IpRanges':[{'CidrIp': '0.0.0.0/0'}]}
+        ])
+    ]
+    
+    for sg_id, perms in permissions:
+        try:
+            ec2_client.authorize_security_group_ingress(GroupId=sg_id, IpPermissions=perms)
+        except ClientError as e:
+            if 'InvalidPermission.Duplicate' not in str(e):
+                raise
 
     return vpc_id, rds_security_group_id, ec2_security_group_id
 
-def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds_sg_name, ec2_sg_name):
-
+def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds_sg_name, ec2_sg_name, skip_rds=False):
     print("\n[SECTION] Pulizia Risorse AWS")
     print("-" * 50)
 
-    # elimino NLB e Target Group
-    print("[STEP] Eliminazione Network Load Balancer e Target Group...")
     try:
         nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
         if nlbs['LoadBalancers']:
-            nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
-            elbv2_client.delete_load_balancer(LoadBalancerArn=nlb_arn)
-            print(f"[INFO] NLB '{NLB_NAME}' eliminato. Attesa della cancellazione...")
+            elbv2_client.delete_load_balancer(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
             waiter = elbv2_client.get_waiter('load_balancers_deleted')
-            waiter.wait(LoadBalancerArns=[nlb_arn])
-            print(f"[SUCCESS] NLB '{NLB_NAME}' eliminato")
+            waiter.wait(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
     except ClientError as e:
-        if "LoadBalancerNotFound" in str(e):
-            print(f"[INFO] NLB '{NLB_NAME}' non trovato o già eliminato")
-        else:
-            print(f"[ERROR] Errore nell'eliminazione NLB: {e}")
+        if "LoadBalancerNotFound" not in str(e):
+            print(f"[ERROR] NLB: {e}")
 
     try:
         target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
         if target_groups['TargetGroups']:
-            tg_arn = target_groups['TargetGroups'][0]['TargetGroupArn']
-            elbv2_client.delete_target_group(TargetGroupArn=tg_arn)
-            print(f"[SUCCESS] Target Group '{TARGET_GROUP_NAME}' eliminato")
+            elbv2_client.delete_target_group(TargetGroupArn=target_groups['TargetGroups'][0]['TargetGroupArn'])
     except ClientError as e:
-        if "TargetGroupNotFound" in str(e):
-            print(f"[INFO] Target Group '{TARGET_GROUP_NAME}' non trovato o già eliminato")
-        else:
-            print(f"[ERROR] Errore nell'eliminazione Target Group: {e}")
+        if "TargetGroupNotFound" not in str(e):
+            print(f"[ERROR] Target Group: {e}")
 
-    # termino EC2
-    print("[STEP] Terminazione delle istanze EC2 in corso...")
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values':['MusicApp']}]
     )
-    instance_ids =[]
+    instance_ids = []
     for reservation in instances['Reservations']:
         for instance in reservation['Instances']:
             if instance['State']['Name'] != 'terminated':
                 instance_ids.append(instance['InstanceId'])
     if instance_ids:
         ec2_client.terminate_instances(InstanceIds=instance_ids)
-        print(f"[INFO] Istanze EC2 terminate: {instance_ids}. Attendo la conferma di terminazione...")
         waiter = ec2_client.get_waiter('instance_terminated')
         waiter.wait(InstanceIds=instance_ids)
-        print("[SUCCESS] Tutte le istanze EC2 sono state terminate correttamente.")
-    else:
-        print("[INFO] Nessuna istanza EC2 'MusicApp' trovata da terminare.")
 
-    # elimino RDS
-    print(f"[STEP] Eliminazione dell'istanza RDS '{rds_id}' in corso...")
-    try:
-        rds_client.delete_db_instance(
-            DBInstanceIdentifier=rds_id,
-            SkipFinalSnapshot=True
-        )
-        print(f"[INFO] Istanza RDS '{rds_id}' eliminata. Attesa della cancellazione...")
-        waiter = rds_client.get_waiter('db_instance_deleted')
-        waiter.wait(DBInstanceIdentifier=rds_id)
-        print(f"[SUCCESS] Istanza RDS '{rds_id}' eliminata.")
-    except ClientError as e:
-        if "DBInstanceNotFound" in str(e):
-            print(f"[INFO] Istanza RDS '{rds_id}' non trovata o già eliminata.")
-        else:
-            print(f"[ERROR] durante l'eliminazione dell'istanza RDS: {e}")
+    if not skip_rds:
+        try:
+            rds_client.delete_db_instance(DBInstanceIdentifier=rds_id, SkipFinalSnapshot=True)
+            waiter = rds_client.get_waiter('db_instance_deleted')
+            waiter.wait(DBInstanceIdentifier=rds_id)
+        except ClientError as e:
+            if "DBInstanceNotFound" not in str(e):
+                print(f"[ERROR] RDS: {e}")
 
-    # elimino SG
-    print("[STEP] Eliminazione dei Security Groups...")
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values':['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     
-    sg_to_delete =[]
-    try:
-        rds_sg_id = ec2_client.describe_security_groups(
-            GroupNames=[rds_sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
-        )['SecurityGroups'][0]['GroupId']
-        sg_to_delete.append(rds_sg_id)
-    except ClientError as e:
-        if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
-    
-    try:
-        ec2_sg_id = ec2_client.describe_security_groups(
-            GroupNames=[ec2_sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
-        )['SecurityGroups'][0]['GroupId']
-        sg_to_delete.append(ec2_sg_id)
-    except ClientError as e:
-        if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
-
-    for sg_id in sg_to_delete:
+    for sg_name in [rds_sg_name, ec2_sg_name]:
         try:
+            sg_id = ec2_client.describe_security_groups(
+                GroupNames=[sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
+            )['SecurityGroups'][0]['GroupId']
+            
             sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
             if 'IpPermissions' in sg_details and sg_details['IpPermissions']:
-                ec2_client.revoke_security_group_ingress(
-                    GroupId=sg_id,
-                    IpPermissions=sg_details['IpPermissions']
-                )
-                print(f"[INFO] Regole di ingresso revocate per SG {sg_id}.")
+                ec2_client.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=sg_details['IpPermissions'])
+            
+            ec2_client.delete_security_group(GroupId=sg_id)
         except ClientError as e:
-            if 'InvalidPermission.NotFound' not in str(e):
-                print(f"[WARNING] Impossibile revocare regole di ingresso per {sg_id}: {e}")
+            if "InvalidGroup.NotFound" not in str(e) and "DependencyViolation" not in str(e):
+                print(f"[ERROR] SG {sg_name}: {e}")
 
-    for sg_name_current in[rds_sg_name, ec2_sg_name]:
-        try:
-            sg_id_current = ec2_client.describe_security_groups(
-                GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
-            )['SecurityGroups'][0]['GroupId']
-            ec2_client.delete_security_group(GroupId=sg_id_current)
-            print(f"[INFO] Security Group '{sg_name_current}' ({sg_id_current}) eliminato.")
-        except ClientError as e:
-            if "InvalidGroup.NotFound" in str(e):
-                print(f"[INFO] Security Group '{sg_name_current}' non trovato o già eliminato.")
-            elif "DependencyViolation" in str(e):
-                print(f"[WARNING] Security Group '{sg_name_current}' ha ancora dipendenze. Riprova più tardi o elimina manualmente.")
-            else:
-                print(f"[ERROR] durante l'eliminazione del Security Group '{sg_name_current}': {e}")
-    
-    # elimino Key Pair
-    print(f"[STEP] Eliminazione della Key Pair '{key_name}'...")
     try:
         ec2_client.delete_key_pair(KeyName=key_name)
-        print(f"[INFO] Key Pair '{key_name}' eliminata da AWS.")
         if os.path.exists(f"{key_name}.pem"):
-            try:
-                os.remove(f"{key_name}.pem")
-                print(f"[INFO] File locale '{key_name}.pem' eliminato.")
-            except PermissionError:
-                print(f"[WARNING] Impossibile eliminare il file locale '{key_name}.pem' per errore di permessi. Elimina manualmente.")
-            except Exception as file_e:
-                print(f"[WARNING] Errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
-    except ClientError as e:
-        if "InvalidKeyPair.NotFound" in str(e):
-            print(f"[INFO] Key Pair '{key_name}' non trovata o già eliminata in AWS.")
-            if os.path.exists(f"{key_name}.pem"):
-                try:
-                    os.remove(f"{key_name}.pem")
-                    print(f"[INFO] File locale '{key_name}.pem' eliminato.")
-                except PermissionError:
-                    print(f"[WARNING] Impossibile eliminare il file locale '{key_name}.pem' per errore di permessi. Elimina manualmente.")
-                except Exception as file_e:
-                    print(f"[WARNING] Errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
-        else:
-            print(f"[ERROR] durante l'eliminazione della Key Pair in AWS: {e}")
-            raise
+            os.remove(f"{key_name}.pem")
+    except (ClientError, PermissionError):
+        pass
 
-    print("[SUCCESS] Pulizia delle risorse AWS completata.")
+    print("[SUCCESS] Pulizia completata.")
 
 
 def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_sql, data_sql):
-
     print("\n[SECTION] Inizializzazione Database RDS")
     print("-" * 50)
-    print(f"[INFO] Inizializzazione del database '{db_name}' su {rds_endpoint}...")
 
-    # connessione al database postgres
-    conn_str_master = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
-    conn = None
-    try:
-        for i in range(5):
-            try:
-                conn = psycopg2.connect(conn_str_master)
-                conn.autocommit = True
-                print("[INFO] Connesso al database 'postgres' per la gestione.")
-                break
-            except psycopg2.OperationalError as e:
-                print(f"[INFO] Tentativo {i+1} di connessione fallito: {e}. Attesa di 10 secondi...")
+    conn_str = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
+    
+    for i in range(3):
+        try:
+            conn = psycopg2.connect(conn_str)
+            conn.autocommit = True
+            break
+        except psycopg2.OperationalError:
+            if i < 2:
                 time.sleep(10)
-        if conn is None:
-            raise Exception("Impossibile connettersi al database master PostgreSQL.")
+            else:
+                raise Exception("Impossibile connettersi al database PostgreSQL")
 
-        cur = conn.cursor()
+    cur = conn.cursor()
+    cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
+    cur.execute(f"CREATE DATABASE {db_name};")
+    cur.close()
+    conn.close()
 
-        # 1. termina tutte le connessioni al database
-        print(f"[STEP] Terminazione delle connessioni attive al database '{db_name}'...")
-        try:
-            cur.execute(f"""
-                SELECT pg_terminate_backend(pg_stat_activity.pid)
-                FROM pg_stat_activity
-                WHERE pg_stat_activity.datname = '{db_name}'
-                    AND pid <> pg_backend_pid();
-            """)
-            print(f"[INFO] Connessioni terminate per '{db_name}'.")
-        except Exception as e:
-            print(f"[WARNING] Errore nella terminazione delle connessioni: {e}")
-
-        # 2. elimino il database esistente (se esiste)
-        print(f"[STEP] Tentativo di eliminazione del database '{db_name}' se esiste...")
-        try:
-            cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
-            print(f"[INFO] Database '{db_name}' eliminato o non esisteva.")
-        except Exception as e:
-            print(f"[ERROR] Nell'eliminazione del database '{db_name}': {e}")
-            raise
-
-        # 3. creo il database
-        print(f"[STEP] Creazione del database '{db_name}'...")
-        cur.execute(f"CREATE DATABASE {db_name};")
-        print(f"[SUCCESS] Database '{db_name}' creato.")
-
-        cur.close()
-        conn.close()
-
-        # connetto al database per inizializzazione schema e dati
-        conn_str_app = f"dbname={db_name} user={db_username} password={db_password} host={rds_endpoint} port=5432"
-        conn_app = None
-        for i in range(5):
-            try:
-                conn_app = psycopg2.connect(conn_str_app)
-                print(f"[INFO] Connesso al database '{db_name}' per inizializzazione schema.")
-                break
-            except psycopg2.OperationalError as e:
-                print(f"[INFO] Tentativo {i+1} di connessione al DB app fallito: {e}. Attesa di 5 secondi...")
-                time.sleep(5)
-        if conn_app is None:
-            raise Exception("Impossibile connettersi al database applicativo.")
-
-        conn_app.autocommit = True
-        cur_app = conn_app.cursor()
-
-        # schema.sql
-        print("[STEP] Esecuzione di schema.sql...")
-        try:
-            cur_app.execute(schema_sql)
-            print("[SUCCESS] schema.sql eseguito con successo.")
-        except Exception as e:
-            print(f"[ERROR] Nell'esecuzione dello schema SQL: {e}")
-            raise
-
-        # data.sql
-        print("[STEP] Esecuzione di data.sql...")
-        try:
-            cur_app.execute(data_sql)
-            print("[SUCCESS] data.sql eseguito con successo.")
-        except Exception as e:
-            print(f"[ERROR] Nell'esecuzione del comando SQL per i dati: {e}")
-            raise
-
-        cur_app.close()
-        conn_app.close()
-        print(f"[SUCCESS] Inizializzazione del database '{db_name}' completata con successo.")
-
-    except psycopg2.Error as e:
-        print(f"[ERROR] Durante l'inizializzazione del database: {e}")
-        raise
-    except Exception as e:
-        print(f"[ERROR] Inatteso durante l'inizializzazione del database: {e}")
-        raise
-    finally:
-        if conn:
-            conn.close()
-        if 'conn_app' in locals() and conn_app:
-            conn_app.close()
+    conn_str_app = f"dbname={db_name} user={db_username} password={db_password} host={rds_endpoint} port=5432"
+    conn_app = psycopg2.connect(conn_str_app)
+    conn_app.autocommit = True
+    cur_app = conn_app.cursor()
+    
+    cur_app.execute(schema_sql)
+    cur_app.execute(data_sql)
+    
+    cur_app.close()
+    conn_app.close()
+    print(f"[SUCCESS] Database '{db_name}' inizializzato.")
 
 
 def get_account_id():
@@ -720,207 +449,13 @@ def setup_sns_notification(region, topic_name, email_address):
         raise
     return topic_arn
 
-def wait_for_sns_notification(sns_client, topic_arn, max_wait_minutes=15):
-    
-    print(f"[INFO] Monitoraggio notifiche SNS per topic: {topic_arn.split(':')[-1]}")
-    print(f"[INFO] Timeout massimo: {max_wait_minutes} minuti")
-    
-    cloudwatch = boto3.client('cloudwatch', region_name=REGION)
-    start_time = time.time()
-    max_wait_seconds = max_wait_minutes * 60
-    
-    # Ottieni il numero di messaggi pubblicati prima dell'attesa
-    initial_messages = get_sns_message_count(cloudwatch, topic_arn)
-    
-    while time.time() - start_time < max_wait_seconds:
-        try:
-            current_messages = get_sns_message_count(cloudwatch, topic_arn)
-            elapsed = int(time.time() - start_time)
-            
-            print(f"[INFO] Controllo SNS - Tempo: {elapsed}s - Messaggi: {current_messages}")
-            
-            if current_messages > initial_messages:
-                print(f"[SUCCESS] Nuova notifica SNS rilevata!")
-                return True
-            
-            time.sleep(30)  # Controlla ogni 30 secondi
-            
-        except Exception as e:
-            print(f"[WARNING] Errore nel controllo SNS: {e}")
-            time.sleep(30)
-    
-    print(f"[WARNING] Timeout raggiunto - nessuna nuova notifica SNS rilevata")
-    return False
-
-def get_sns_message_count(cloudwatch, topic_arn):
-
-    try:
-        topic_name = topic_arn.split(':')[-1]
-        response = cloudwatch.get_metric_statistics(
-            Namespace='AWS/SNS',
-            MetricName='NumberOfMessagesPublished',
-            Dimensions=[
-                {
-                    'Name': 'TopicName',
-                    'Value': topic_name
-                }
-            ],
-            StartTime=time.time() - 3600,  # Ultima ora
-            EndTime=time.time(),
-            Period=300,  # 5 minuti
-            Statistics=['Sum']
-        )
-        
-        if response['Datapoints']:
-            return sum(point['Sum'] for point in response['Datapoints'])
-        return 0
-        
-    except Exception as e:
-        print(f"[WARNING] Errore nel recupero metriche SNS: {e}")
-        return 0
-
 def main():
     if "--clean" in os.sys.argv:
-        print("\n[SECTION] Pulizia Risorse AWS")
-        print("-" * 50)
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
         elbv2 = boto3.client('elbv2', region_name=REGION)
-        if "--nords" in os.sys.argv:
-            # elimino tutto tranne il database RDS
-            print("[INFO] Opzione --nords attiva: elimino tutte le risorse tranne il database RDS.")
-            def delete_resources_no_rds(ec2_client, elbv2_client, key_name, rds_sg_name, ec2_sg_name):
-                print("\n[SECTION] Pulizia Risorse AWS - No RDS")
-                print("-" * 50)
-                
-                # Elimina NLB e Target Group
-                print("[STEP] Eliminazione Network Load Balancer e Target Group...")
-                try:
-                    # Elimina NLB
-                    nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
-                    if nlbs['LoadBalancers']:
-                        nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
-                        elbv2_client.delete_load_balancer(LoadBalancerArn=nlb_arn)
-                        print(f"[INFO] NLB '{NLB_NAME}' eliminato. Attesa della cancellazione...")
-                        waiter = elbv2_client.get_waiter('load_balancers_deleted')
-                        waiter.wait(LoadBalancerArns=[nlb_arn])
-                        print(f"[SUCCESS] NLB '{NLB_NAME}' eliminato")
-                except ClientError as e:
-                    if "LoadBalancerNotFound" in str(e):
-                        print(f"[INFO] NLB '{NLB_NAME}' non trovato o già eliminato")
-                    else:
-                        print(f"[ERROR] Errore nell'eliminazione NLB: {e}")
-
-                try:
-                    # Elimina Target Group
-                    target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
-                    if target_groups['TargetGroups']:
-                        tg_arn = target_groups['TargetGroups'][0]['TargetGroupArn']
-                        elbv2_client.delete_target_group(TargetGroupArn=tg_arn)
-                        print(f"[SUCCESS] Target Group '{TARGET_GROUP_NAME}' eliminato")
-                except ClientError as e:
-                    if "TargetGroupNotFound" in str(e):
-                        print(f"[INFO] Target Group '{TARGET_GROUP_NAME}' non trovato o già eliminato")
-                    else:
-                        print(f"[ERROR] Errore nell'eliminazione Target Group: {e}")
-                
-                # Termina le istanze EC2
-                print("[STEP] Terminazione delle istanze EC2 in corso...")
-                instances = ec2_client.describe_instances(
-                    Filters=[{'Name': 'tag:Application', 'Values':['MusicApp']}]
-                )
-                instance_ids =[]
-                for reservation in instances['Reservations']:
-                    for instance in reservation['Instances']:
-                        if instance['State']['Name'] != 'terminated':
-                            instance_ids.append(instance['InstanceId'])
-                if instance_ids:
-                    ec2_client.terminate_instances(InstanceIds=instance_ids)
-                    print(f"[INFO] Istanze EC2 terminate: {instance_ids}. Attendo la conferma di terminazione...")
-                    waiter = ec2_client.get_waiter('instance_terminated')
-                    waiter.wait(InstanceIds=instance_ids)
-                    print("[SUCCESS] Tutte le istanze EC2 sono state terminate correttamente.")
-                else:
-                    print("[INFO] Nessuna istanza EC2 'MusicApp' trovata da terminare.")
-
-                print("[STEP] Eliminazione dei Security Groups...")
-                vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values':['true']}])
-                vpc_id = vpcs['Vpcs'][0]['VpcId']
-                sg_to_delete =[]
-                try:
-                    rds_sg_id = ec2_client.describe_security_groups(
-                        GroupNames=[rds_sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
-                    )['SecurityGroups'][0]['GroupId']
-                    sg_to_delete.append(rds_sg_id)
-                except ClientError as e:
-                    if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
-                try:
-                    ec2_sg_id = ec2_client.describe_security_groups(
-                        GroupNames=[ec2_sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
-                    )['SecurityGroups'][0]['GroupId']
-                    sg_to_delete.append(ec2_sg_id)
-                except ClientError as e:
-                    if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
-                
-                for sg_id in sg_to_delete:
-                    try:
-                        sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
-                        if 'IpPermissions' in sg_details and sg_details['IpPermissions']:
-                            ec2_client.revoke_security_group_ingress(
-                                GroupId=sg_id,
-                                IpPermissions=sg_details['IpPermissions']
-                            )
-                            print(f"[INFO] Regole di ingresso revocate per SG {sg_id}.")
-                    except ClientError as e:
-                        if 'InvalidPermission.NotFound' not in str(e):
-                            print(f"[WARNING] Impossibile revocare regole di ingresso per {sg_id}: {e}")
-                            
-                for sg_name_current in[rds_sg_name, ec2_sg_name]:
-                    try:
-                        sg_id_current = ec2_client.describe_security_groups(
-                            GroupNames=[sg_name_current], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
-                        )['SecurityGroups'][0]['GroupId']
-                        ec2_client.delete_security_group(GroupId=sg_id_current)
-                        print(f"[INFO] Security Group '{sg_name_current}' ({sg_id_current}) eliminato.")
-                    except ClientError as e:
-                        if "InvalidGroup.NotFound" in str(e):
-                            print(f"[INFO] Security Group '{sg_name_current}' non trovato o già eliminato.")
-                        elif "DependencyViolation" in str(e):
-                            print(f"[WARNING] Security Group '{sg_name_current}' ha ancora dipendenze. Riprova più tardi o elimina manualmente.")
-                        else:
-                            print(f"[ERROR] durante l'eliminazione del Security Group '{sg_name_current}': {e}")
-
-                print(f"[STEP] Eliminazione della Key Pair '{key_name}'...")
-                try:
-                    ec2_client.delete_key_pair(KeyName=key_name)
-                    print(f"[INFO] Key Pair '{key_name}' eliminata da AWS.")
-                    if os.path.exists(f"{key_name}.pem"):
-                        try:
-                            os.remove(f"{key_name}.pem")
-                            print(f"[INFO] File locale '{key_name}.pem' eliminato.")
-                        except PermissionError:
-                            print(f"[WARNING] Impossibile eliminare il file locale '{key_name}.pem' per errore di permessi. Elimina manualmente.")
-                        except Exception as file_e:
-                            print(f"[WARNING] Errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
-                except ClientError as e:
-                    if "InvalidKeyPair.NotFound" in str(e):
-                        print(f"[INFO] Key Pair '{key_name}' non trovata o già eliminata in AWS.")
-                        if os.path.exists(f"{key_name}.pem"):
-                            try:
-                                os.remove(f"{key_name}.pem")
-                                print(f"[INFO] File locale '{key_name}.pem' eliminato.")
-                            except PermissionError:
-                                print(f"[WARNING] Impossibile eliminare il file locale '{key_name}.pem' per errore di permessi. Elimina manualmente.")
-                            except Exception as file_e:
-                                print(f"[WARNING] Errore nell'eliminazione del file locale '{key_name}.pem': {file_e}")
-                    else:
-                        print(f"[ERROR] Durante l'eliminazione della Key Pair in AWS: {e}")
-                        raise
-                print("[SUCCESS] Pulizia delle risorse AWS completata - No RDS.")
-
-            delete_resources_no_rds(ec2, elbv2, KEY_PAIR_NAME, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
-        else:
-            delete_resources(ec2, rds, elbv2, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup')
+        skip_rds = "--nords" in os.sys.argv
+        delete_resources(ec2, rds, elbv2, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup', skip_rds)
         return
 
 
@@ -953,24 +488,19 @@ def main():
         # 2. creo VPC e SG
         vpc_id, rds_security_group_id, ec2_security_group_id = create_vpc_and_security_groups(ec2_client, rds_client)
 
-        # 3. deploy istanza RDS
-        print(f"\n[STEP] Tentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'...")
+        print(f"\n[STEP] Deploy RDS '{DB_INSTANCE_IDENTIFIER}'...")
         rds_endpoint = None
         try:
             response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
             instance_status = response['DBInstances'][0]['DBInstanceStatus']
             rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
-            print(f"[INFO] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' trovata con stato: {instance_status}.")
             if instance_status != 'available':
-                print(f"[INFO] Attesa che l'istanza RDS '{DB_INSTANCE_IDENTIFIER}' diventi 'available'...")
                 waiter = rds_client.get_waiter('db_instance_available')
                 waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
-                print(f"[SUCCESS] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' ora è 'available'.")
         except ClientError as e:
             if "DBInstanceNotFound" in str(e):
-                print(f"[INFO] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' non trovata. Creazione in corso...")
                 rds_client.create_db_instance(
                     DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER,
                     DBInstanceClass=DB_INSTANCE_CLASS,
@@ -981,14 +511,13 @@ def main():
                     DBName=DB_NAME,
                     VpcSecurityGroupIds=[rds_security_group_id],
                     EngineVersion=DB_ENGINE_VERSION,
-                    PubliclyAccessible=True # Per debug e accesso locale, impostare a False per sicurezza in produzione
+                    PubliclyAccessible=True
                 )
-                print(f"[INFO] Creazione dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}' avviata. Attesa che diventi 'available'...")
                 waiter = rds_client.get_waiter('db_instance_available')
                 waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
-                print(f"[SUCCESS] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' ora è 'available'. Endpoint: {rds_endpoint}")
+                print(f"[SUCCESS] RDS creato: {rds_endpoint}")
             else:
                 raise
 
@@ -1023,9 +552,6 @@ def main():
 
         user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
 
-        # 7. deploy istanza EC2 MusicAppServer (o usa esistente)
-        server_public_ip = None
-        server_private_ip = None
         server_instances_found = ec2_client.describe_instances(
             Filters=[
                 {'Name': 'tag:Name', 'Values':['MusicAppServer']},
@@ -1037,9 +563,8 @@ def main():
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
             server_public_ip = server_instances_found[0]['Instances'][0].get('PublicIpAddress')
             server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
-            print(f"\n[INFO] Istanza MusicAppServer esistente e in esecuzione: {server_instance_id}. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
         else:
-            print("\n[STEP] Deploy dell'istanza EC2 'MusicAppServer'...")
+            print("\n[STEP] Deploy EC2 MusicAppServer...")
             server_instances = ec2_client.run_instances(
                 ImageId=AMI_ID,
                 InstanceType=INSTANCE_TYPE,
@@ -1059,31 +584,17 @@ def main():
                 ]
             )
             server_instance_id = server_instances['Instances'][0]['InstanceId']
-            print(f"[INFO] Istanza MusicAppServer avviata: {server_instance_id}. Attesa che sia 'running'...")
             waiter = ec2_client.get_waiter('instance_running')
             waiter.wait(InstanceIds=[server_instance_id])
             server_instance_details = ec2_client.describe_instances(InstanceIds=[server_instance_id])
             server_public_ip = server_instance_details['Reservations'][0]['Instances'][0]['PublicIpAddress']
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
-            print(f"[SUCCESS] MusicAppServer è in esecuzione. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
+            print(f"[SUCCESS] EC2 attivo: {server_public_ip}")
 
-        # 8. Aspetta la notifica SNS di completamento prima di registrare nel Target Group
         if server_instances_found:
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
-        
-        print(f"[INFO] Aspettando notifica SNS di completamento user data...")
-        sns_client = boto3.client('sns', region_name=REGION)
-        notification_received = wait_for_sns_notification(sns_client, topic_arn, max_wait_minutes=15)
-        
-        if notification_received:
-            print(f"[SUCCESS] Notifica SNS ricevuta! Procedendo con la registrazione nel Target Group...")
-            register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
-        else:
-            print(f"[WARNING] Notifica SNS non ricevuta nel tempo previsto")
-            print(f"[INFO] Registrazione nel Target Group comunque...")
-            register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
+        register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
 
-        # configurazione salvata in un file JSON
         config = {
             "server_public_ip": server_public_ip,
             "server_private_ip": server_private_ip,
@@ -1095,8 +606,10 @@ def main():
             "nlb_dns_name": nlb_dns_name,
             "nlb_port": "8080"
         }
+
         with open("deploy_config.json", "w") as f:
             json.dump(config, f, indent=4)
+
         print("\n[SUCCESS] Configurazione salvata in 'deploy_config.json'.")
         print("\n[GUIDE] Guida Rapida Deploy Applicazione")
         print("=" * 60)
