@@ -69,7 +69,7 @@ def get_public_key(owner, repo, token):
 
 def encrypt_secret(public_key, secret_value):
 
-    # Decodifica la chiave pubblica da base64
+    # decodifico la chiave pubblica da base64
     public_key_bytes = base64.b64decode(public_key)
     
     # Crea l'oggetto chiave pubblica usando PyNaCl
