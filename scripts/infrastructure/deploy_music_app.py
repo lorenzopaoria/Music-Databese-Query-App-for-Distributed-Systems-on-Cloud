@@ -283,8 +283,29 @@ def clean_obsolete_targets(elbv2_client, ec2_client, target_group_arn, current_i
         print(f"[WARNING] Errore nella pulizia del Target Group: {e}")
 
 def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id, wait_for_health=True):
-    # Prima verifica se il target è già registrato
+    print(f"[INFO] Forzando registrazione di {instance_id} al Target Group...")
+    
+    # Sempre deregistra prima (se presente) per assicurarsi di una registrazione pulita
     try:
+        elbv2_client.deregister_targets(
+            TargetGroupArn=target_group_arn,
+            Targets=[{'Id': instance_id, 'Port': 8080}]
+        )
+        print(f"[INFO] Target {instance_id} deregistrato (se era presente)")
+        time.sleep(3)  # Breve pausa per permettere la deregistrazione
+    except ClientError as e:
+        if "TargetNotFound" not in str(e):
+            print(f"[WARNING] Errore nella deregistrazione: {e}")
+    
+    # Ora registra sempre il target
+    try:
+        elbv2_client.register_targets(
+            TargetGroupArn=target_group_arn,
+            Targets=[{'Id': instance_id, 'Port': 8080}]
+        )
+        print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
+        
+        # Verifica immediatamente la registrazione
         response = elbv2_client.describe_target_health(
             TargetGroupArn=target_group_arn,
             Targets=[{'Id': instance_id, 'Port': 8080}]
@@ -292,32 +313,13 @@ def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id, 
         
         if response['TargetHealthDescriptions']:
             current_state = response['TargetHealthDescriptions'][0]['TargetHealth']['State']
-            print(f"[INFO] Target {instance_id} già registrato con stato: {current_state}")
-            
-            # Se il target è in uno stato problematico, lo riregistra
-            if current_state in ['unhealthy', 'unused', 'draining']:
-                print(f"[INFO] Target in stato {current_state}, riregistrazione...")
-                elbv2_client.deregister_targets(
-                    TargetGroupArn=target_group_arn,
-                    Targets=[{'Id': instance_id, 'Port': 8080}]
-                )
-                time.sleep(5)  # Attende un po' prima di riregistrare
-            else:
-                print(f"[INFO] Target già in stato accettabile: {current_state}")
-                return
-    except ClientError as e:
-        if "TargetNotFound" in str(e):
-            print(f"[INFO] Target {instance_id} non trovato nel Target Group, registrazione...")
+            print(f"[INFO] Stato target dopo registrazione: {current_state}")
         else:
-            print(f"[WARNING] Errore nel controllo target: {e}")
-    
-    # Registra o riregistra il target
-    try:
-        elbv2_client.register_targets(
-            TargetGroupArn=target_group_arn,
-            Targets=[{'Id': instance_id, 'Port': 8080}]
-        )
-        print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
+            print(f"[WARNING] Nessuna informazione trovata dopo la registrazione")
+            
+    except ClientError as e:
+        print(f"[ERROR] Errore nella registrazione del target: {e}")
+        raise
     except ClientError as e:
         if "TargetAlreadyExists" in str(e):
             print(f"[INFO] Target {instance_id} già registrato")
@@ -695,12 +697,56 @@ def main():
 
         # Registra sempre l'istanza EC2 corrente al Target Group (nuova o esistente)
         print(f"\n[STEP] Registrazione EC2 {server_instance_id} al Target Group...")
+        print(f"[DEBUG] Target Group ARN: {target_group_arn}")
+        print(f"[DEBUG] Instance ID: {server_instance_id}")
+        
+        # Verifica che l'istanza sia in running state prima della registrazione
+        instance_details = ec2_client.describe_instances(InstanceIds=[server_instance_id])
+        instance_state = instance_details['Reservations'][0]['Instances'][0]['State']['Name']
+        print(f"[DEBUG] Stato istanza EC2: {instance_state}")
+        
+        if instance_state != 'running':
+            print(f"[INFO] Aspettando che l'istanza sia in running state...")
+            waiter = ec2_client.get_waiter('instance_running')
+            waiter.wait(InstanceIds=[server_instance_id])
+            print(f"[SUCCESS] Istanza ora in running state")
         
         # Prima pulisce i target obsoleti se il Target Group esiste
         clean_obsolete_targets(elbv2_client, ec2_client, target_group_arn, server_instance_id)
         
-        # Poi registra l'istanza corrente
-        register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id, wait_for_health=False)
+        # Poi registra l'istanza corrente con retry se necessario
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id, wait_for_health=False)
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"[WARNING] Tentativo {attempt + 1} fallito: {e}. Riprovo in 5 secondi...")
+                    time.sleep(5)
+                else:
+                    print(f"[ERROR] Tutti i tentativi di registrazione falliti: {e}")
+                    raise
+        
+        # Verifica finale della registrazione
+        print(f"\n[STEP] Verifica finale della registrazione...")
+        try:
+            final_response = elbv2_client.describe_target_health(
+                TargetGroupArn=target_group_arn,
+                Targets=[{'Id': server_instance_id, 'Port': 8080}]
+            )
+            
+            if final_response['TargetHealthDescriptions']:
+                final_state = final_response['TargetHealthDescriptions'][0]['TargetHealth']['State']
+                final_description = final_response['TargetHealthDescriptions'][0]['TargetHealth'].get('Description', '')
+                print(f"[SUCCESS] Target {server_instance_id} registrato con stato: {final_state}")
+                if final_description:
+                    print(f"[INFO] Descrizione: {final_description}")
+            else:
+                print(f"[ERROR] Target non trovato dopo la registrazione!")
+                
+        except Exception as e:
+            print(f"[ERROR] Errore nella verifica finale: {e}")
 
         config = {
             "server_public_ip": server_public_ip,
