@@ -242,19 +242,23 @@ def create_network_load_balancer_and_target_group(ec2_client, elbv2_client, vpc_
 
     return nlb_arn, nlb_dns_name, target_group_arn
 
-def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id):
+def register_ec2_with_target_group(elbv2_client, target_group_arn, instance_id, wait_for_health=True):
     elbv2_client.register_targets(
         TargetGroupArn=target_group_arn,
         Targets=[{'Id': instance_id, 'Port': 8080}]
     )
     print(f"[SUCCESS] EC2 {instance_id} registrata nel Target Group")
     
-    waiter = elbv2_client.get_waiter('target_in_service')
-    waiter.wait(
-        TargetGroupArn=target_group_arn,
-        Targets=[{'Id': instance_id, 'Port': 8080}]
-    )
-    print(f"[SUCCESS] Target healthy nel Load Balancer")
+    if wait_for_health:
+        print(f"[INFO] Attendendo che il target diventi healthy...")
+        waiter = elbv2_client.get_waiter('target_in_service')
+        waiter.wait(
+            TargetGroupArn=target_group_arn,
+            Targets=[{'Id': instance_id, 'Port': 8080}]
+        )
+        print(f"[SUCCESS] Target healthy nel Load Balancer")
+    else:
+        print(f"[INFO] Target registrato - health check sarà completato dopo il deployment dell'applicazione")
 
 def create_vpc_and_security_groups(ec2_client, rds_client):
     print("\n[SECTION] VPC e Security Groups")
@@ -449,6 +453,28 @@ def setup_sns_notification(region, topic_name, email_address):
         raise
     return topic_arn
 
+def check_target_health(elbv2_client, target_group_arn, instance_id):
+    """Controlla lo stato dell'health check per il target specificato"""
+    try:
+        response = elbv2_client.describe_target_health(
+            TargetGroupArn=target_group_arn,
+            Targets=[{'Id': instance_id, 'Port': 8080}]
+        )
+        
+        if response['TargetHealthDescriptions']:
+            health_status = response['TargetHealthDescriptions'][0]['TargetHealth']['State']
+            description = response['TargetHealthDescriptions'][0]['TargetHealth'].get('Description', '')
+            print(f"[INFO] Stato health check del target {instance_id}: {health_status}")
+            if description:
+                print(f"[INFO] Descrizione: {description}")
+            return health_status
+        else:
+            print(f"[WARNING] Nessuna informazione di health check trovata per {instance_id}")
+            return "unknown"
+    except Exception as e:
+        print(f"[ERROR] Errore nel controllo health check: {e}")
+        return "error"
+
 def main():
     if "--clean" in os.sys.argv:
         ec2 = boto3.client('ec2', region_name=REGION)
@@ -593,7 +619,7 @@ def main():
 
         if server_instances_found:
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
-        register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
+        register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id, wait_for_health=False)
 
         config = {
             "server_public_ip": server_public_ip,
@@ -611,6 +637,15 @@ def main():
             json.dump(config, f, indent=4)
 
         print("\n[SUCCESS] Configurazione salvata in 'deploy_config.json'.")
+        
+        # Controllo lo stato dell'health check
+        print(f"\n[INFO] Controllo stato health check...")
+        health_status = check_target_health(elbv2_client, target_group_arn, server_instance_id)
+        
+        if health_status == "unhealthy":
+            print(f"[WARNING] Il target è ancora unhealthy - questo è normale se l'applicazione non è stata ancora deployata")
+            print(f"[INFO] L'health check diventerà healthy dopo il deployment dell'applicazione Java")
+
         print("\n[GUIDE] Guida Rapida Deploy Applicazione")
         print("=" * 60)
         print("[1] Aggiorna i segreti GitHub")
