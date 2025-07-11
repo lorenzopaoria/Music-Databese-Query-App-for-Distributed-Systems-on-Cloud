@@ -321,9 +321,11 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
     try:
         nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
         if nlbs['LoadBalancers']:
-            elbv2_client.delete_load_balancer(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
+            nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
+            elbv2_client.delete_load_balancer(LoadBalancerArn=nlb_arn)
             waiter = elbv2_client.get_waiter('load_balancers_deleted')
-            waiter.wait(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
+            waiter.wait(LoadBalancerArns=[nlb_arn])
+            print(f"[SUCCESS] Network Load Balancer eliminato")
     except ClientError as e:
         if "LoadBalancerNotFound" not in str(e):
             print(f"[ERROR] NLB: {e}")
@@ -332,6 +334,7 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
         target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
         if target_groups['TargetGroups']:
             elbv2_client.delete_target_group(TargetGroupArn=target_groups['TargetGroups'][0]['TargetGroupArn'])
+            print(f"[SUCCESS] Target Group eliminato")
     except ClientError as e:
         if "TargetGroupNotFound" not in str(e):
             print(f"[ERROR] Target Group: {e}")
@@ -535,12 +538,7 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. creo Network Load Balancer e Target Group
-        nlb_arn, nlb_dns_name, target_group_arn = create_network_load_balancer_and_target_group(
-            ec2_client, elbv2_client, vpc_id, ec2_security_group_id
-        )
-
-        # 6. setup SNS notification e modifico user_data_script
+        # 5. setup SNS notification e modifico user_data_script
         topic_name = 'musicapp-server-setup-complete'
         email_address = 'lorenzopaoria@icloud.com'
         topic_arn = setup_sns_notification(REGION, topic_name, email_address)
@@ -552,6 +550,7 @@ def main():
 
         user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
 
+        # 6. Deploy EC2 Server
         server_instances_found = ec2_client.describe_instances(
             Filters=[
                 {'Name': 'tag:Name', 'Values':['MusicAppServer']},
@@ -563,6 +562,7 @@ def main():
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
             server_public_ip = server_instances_found[0]['Instances'][0].get('PublicIpAddress')
             server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
+            print(f"[INFO] Server EC2 esistente trovato: {server_public_ip}")
         else:
             print("\n[STEP] Deploy EC2 MusicAppServer...")
             server_instances = ec2_client.run_instances(
@@ -591,8 +591,21 @@ def main():
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"[SUCCESS] EC2 attivo: {server_public_ip}")
 
-        if server_instances_found:
-            server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
+        # 7. Attesa per permettere al server di avviarsi (4 minuti)
+        print(f"\n[STEP] Attesa 4 minuti per permettere al server di avviarsi...")
+        print(f"[INFO] Durante questo tempo il server Docker si avvia e si prepara")
+        for i in range(4):
+            remaining = 4 - i
+            print(f"[INFO] Attesa: {remaining} minuti rimanenti...")
+            time.sleep(60)  # Attende 1 minuto per volta
+        print(f"[SUCCESS] Attesa completata. Procedo con la creazione del Load Balancer")
+
+        # 8. Ora creo Network Load Balancer e Target Group
+        nlb_arn, nlb_dns_name, target_group_arn = create_network_load_balancer_and_target_group(
+            ec2_client, elbv2_client, vpc_id, ec2_security_group_id
+        )
+
+        # 9. Registra il server nel Target Group
         register_ec2_with_target_group(elbv2_client, target_group_arn, server_instance_id)
 
         config = {
