@@ -1,7 +1,7 @@
 #!/bin/bash
 sudo dnf update -y
-# installa Java 17, Git, Maven, Docker e AWS CLI
-sudo dnf install -y java-17-amazon-corretto-devel git maven docker awscli
+# installa Git, Docker e AWS CLI
+sudo dnf install -y  git docker awscli
 sudo systemctl enable docker
 sudo systemctl start docker
 sudo usermod -aG docker ec2-user
@@ -34,31 +34,15 @@ APP_DIR="/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Clou
 git clone https://github.com/lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git $APP_DIR
 sudo chown -R ec2-user:ec2-user $APP_DIR
 
-# creo il file Dockerfile per il progetto server
-cat <<EOF > $APP_DIR/Dockerfile
-# Use an official Maven image with Java 17 as the base image
-FROM maven:3.9-eclipse-temurin-17
-
-# Set the working directory inside the container
-WORKDIR /app
-
-# Copy the entire project into the container
-COPY . .
-
-# Navigate to the server project directory and run 'mvn clean install'
-RUN mvn -f mvnProject-Server/pom.xml clean install
-
-# Set the working directory to the server project for the next command
-WORKDIR /app/mvnProject-Server
-
-# Expose port 8080 to allow traffic to the application
-EXPOSE 8080
-
-# Command to run the application using the 'server' profile
-CMD ["mvn", "-Pserver", "exec:java"]
-EOF
-
-echo "Dockerfile created successfully in $APP_DIR"
+# verifico che il Dockerfile esista nel repository
+if [ -f "$APP_DIR/Dockerfile.dockerfile" ]; then
+    # rinomino il Dockerfile esistente per Docker
+    mv "$APP_DIR/Dockerfile.dockerfile" "$APP_DIR/Dockerfile"
+    echo "Using existing Dockerfile from repository"
+else
+    echo "Warning: Dockerfile.dockerfile not found in repository"
+    exit 1
+fi
 
 # build della Docker image
 echo "Building the Docker image..."

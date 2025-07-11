@@ -325,9 +325,10 @@ def delete_resources(ec2_client, rds_client, elbv2_client, key_name, rds_id, rds
     try:
         nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
         if nlbs['LoadBalancers']:
-            elbv2_client.delete_load_balancer(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
+            nlb_arn = nlbs['LoadBalancers'][0]['LoadBalancerArn']
+            elbv2_client.delete_load_balancer(LoadBalancerArn=nlb_arn)
             waiter = elbv2_client.get_waiter('load_balancers_deleted')
-            waiter.wait(LoadBalancerArns=[nlbs['LoadBalancers'][0]['LoadBalancerArn']])
+            waiter.wait(LoadBalancerArns=[nlb_arn])
     except ClientError as e:
         if "LoadBalancerNotFound" not in str(e):
             print(f"[ERROR] NLB: {e}")
