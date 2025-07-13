@@ -144,9 +144,16 @@ def main():#
     DB_USERNAME = config["db_username"]
     DB_PASSWORD = config["db_password"]
     
-    # configurazione client: usa NLB se disponibile, altrimenti IP EC2
-    CLIENT_TARGET_HOST = config.get("nlb_dns_name", SERVER_EC2_PUBLIC_IP)
-    CLIENT_TARGET_PORT = config.get("nlb_port", "8080")
+    # Configurazione client: controlla se il NLB è disponibile
+    nlb_enabled = config.get("nlb_enabled", False)
+    if nlb_enabled and "nlb_dns" in config and "nlb_port" in config:
+        CLIENT_TARGET_HOST = config["nlb_dns"]
+        CLIENT_TARGET_PORT = str(config["nlb_port"])
+        print(f"[INFO] Configurazione client per Network Load Balancer: {CLIENT_TARGET_HOST}:{CLIENT_TARGET_PORT}")
+    else:
+        CLIENT_TARGET_HOST = SERVER_EC2_PUBLIC_IP
+        CLIENT_TARGET_PORT = SERVER_APPLICATION_PORT
+        print(f"[INFO] Configurazione client per connessione diretta EC2: {CLIENT_TARGET_HOST}:{CLIENT_TARGET_PORT}")
 
     print("[STEP] Avvio del processo di aggiornamento della configurazione...")
 
