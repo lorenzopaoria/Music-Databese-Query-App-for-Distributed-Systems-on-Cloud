@@ -247,4 +247,4 @@ python setup_nlb.py --clean
 
 ## Licenza
 
-Questo progetto è sviluppato per scopi educativi nell'ambito del corso di Sistemi Cloud.
+Questo progetto è sviluppato per scopi educativi nell'ambito del corso di Sistemi Cloud e Laboratorio.
