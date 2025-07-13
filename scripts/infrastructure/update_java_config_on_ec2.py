@@ -144,7 +144,7 @@ def main():#
     DB_USERNAME = config["db_username"]
     DB_PASSWORD = config["db_password"]
     
-    # Configurazione client: controlla se il NLB è disponibile
+    # controllo se il NLB è disponibile
     nlb_enabled = config.get("nlb_enabled", False)
     if nlb_enabled and "nlb_dns" in config and "nlb_port" in config:
         CLIENT_TARGET_HOST = config["nlb_dns"]

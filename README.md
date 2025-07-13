@@ -44,7 +44,7 @@ aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
 aws_session_token = YOUR_SESSION_TOKEN (opzionale, se usi credenziali temporanee)
 ```
 
-### 2. Configurazione GitHub (Opzionale)
+### 2. Configurazione GitHub
 
 Per automatizzare gli aggiornamenti via GitHub Actions, crea un file `.env` nella root del progetto:
 
@@ -85,7 +85,39 @@ python deploy_music_app.py
 
 **Tempo stimato:** 15-20 minuti
 
-### 2: Aggiornamento GitHub Secrets
+### 2: Configurazione Network Load Balancer (Opzionale)
+
+Per migliorare le prestazioni e l'alta disponibilità, puoi configurare un Network Load Balancer:
+
+```bash
+cd scripts/infrastructure
+python setup_nlb.py
+```
+
+**Cosa fa questo script:**
+
+- Crea un Network Load Balancer (NLB) su AWS
+- Configura un Target Group per l'istanza EC2 server
+- Crea un listener sulla porta 8080
+- Registra automaticamente l'istanza server come target
+- Aggiorna la configurazione locale per usare il NLB
+- Abilita health check automatici del server
+
+**Vantaggi del NLB:**
+
+- **Alta Disponibilità**: Distribuzione automatica del traffico
+- **Scalabilità**: Facile aggiunta di nuove istanze server
+- **Performance**: Latenza ultra-bassa (Layer 4)
+- **Monitoring**: Health check automatici dei target
+- **Elasticità**: Gestione automatica del carico
+
+**Pulizia NLB (mantenendo EC2 e RDS):**
+
+```bash
+python setup_nlb.py --clean
+```
+
+### 3: Aggiornamento GitHub Secrets
 
 Per sincronizzare le configurazioni con GitHub Actions:
 
@@ -101,7 +133,7 @@ python update_github_secrets.py
 - Aggiorna i secrets nel repository GitHub
 - Abilita la CI/CD pipeline per deployments automatici
 
-### 3: Aggiornamento Configurazione Esistente
+### 4: Aggiornamento Configurazione Esistente
 
 Se l'infrastruttura è già stata creata e vuoi solo aggiornare la configurazione Java:
 
@@ -113,8 +145,15 @@ python update_java_config_on_ec2.py
 **Cosa fa questo script:**
 
 - Aggiorna il codice Java dal repository Git localmente
+- **Rileva automaticamente** se il Network Load Balancer è configurato
+- **Configura il client** per connettersi tramite NLB (se disponibile) o direttamente all'EC2
 - Fa una push alla repository Git che attiverà la Git Action
 - La Git Action si connetterà tramite SSH all'instanza EC2 server e farà un deployment automatico
+
+**Modalità di Connessione Automatica:**
+
+- **Con NLB**: Client → Network Load Balancer → Server EC2
+- **Senza NLB**: Client → Server EC2 (connessione diretta)
 
 ## Architettura del Sistema
 
@@ -125,7 +164,7 @@ python update_java_config_on_ec2.py
 3. **AWS Infrastructure**:
    - EC2 (istanze per il server)
    - RDS (database PostgreSQL)
-   - NLB (Network Load Balancer)
+   - NLB (Network Load Balancer) - **Opzionale**
    - SNS (notifiche)
    - Security Groups (firewall)
    - CloudWatch (monitoring)
@@ -134,9 +173,19 @@ python update_java_config_on_ec2.py
 
 ### Flusso delle Operazioni
 
+**Modalità Standard (senza NLB):**
+
+1. L'utente interagisce con il **client Java**
+2. Il client invia richieste TCP direttamente all'**istanza EC2**
+3. Il **server Java** (containerizzato con Docker) processa le richieste
+4. Il server interroga il **database PostgreSQL** su AWS RDS
+5. I risultati vengono restituiti al client
+
+**Modalità con Network Load Balancer (opzionale):**
+
 1. L'utente interagisce con il **client Java**
 2. Il client invia richieste TCP al **Network Load Balancer**
-3. Il **NLB** distribuisce il carico tra le istanze EC2 del server inoltre farà un HealthCheck al server Java ogni 60 secondi
+3. Il **NLB** distribuisce il carico tra le istanze EC2 del server e fa HealthCheck ogni 30 secondi
 4. Il **server Java** (containerizzato con Docker) processa le richieste
 5. Il server interroga il **database PostgreSQL** su AWS RDS
 6. I risultati vengono restituiti al client attraverso la catena inversa
@@ -181,7 +230,12 @@ python deploy_music_app.py --clean
 
 # Elimina tutta l'infrastruttura a meno del database (tempo minore di pulizia)
 python deploy_music_app.py --clean --nords
+
+# Elimina solo il Network Load Balancer (mantiene EC2 e RDS)
+python setup_nlb.py --clean
 ```
+
+**Nota:** Eliminare il database RDS può richiedere 5-10 minuti, mentre eliminare solo le altre risorse è molto più veloce.
 
 ## Contribuire
 
