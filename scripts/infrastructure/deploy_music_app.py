@@ -23,7 +23,7 @@ DB_MASTER_PASSWORD = '12345678'
 DB_NAME = 'musicdb'
 
 def read_aws_credentials():
-    """Legge le credenziali AWS dal file ~/.aws/credentials locale"""
+
     credentials_path = os.path.expanduser('~/.aws/credentials')
     if not os.path.exists(credentials_path):
         raise Exception(f"File delle credenziali AWS non trovato: {credentials_path}")
@@ -47,20 +47,18 @@ def read_aws_credentials():
     return credentials
 
 def update_user_data_with_credentials(user_data_script, credentials):
-    """Sostituisce i placeholder nel user data script con le credenziali reali"""
+
     updated_script = user_data_script.replace(
         'AWS_ACCESS_KEY_ID_PLACEHOLDER', credentials['aws_access_key_id']
     ).replace(
         'AWS_SECRET_ACCESS_KEY_PLACEHOLDER', credentials['aws_secret_access_key']
     )
     
-    # Gestisce il session token (può essere None per credenziali permanenti)
     if credentials['aws_session_token']:
         updated_script = updated_script.replace(
             'AWS_SESSION_TOKEN_PLACEHOLDER', credentials['aws_session_token']
         )
     else:
-        # Rimuove la riga del session token se non presente
         lines = updated_script.split('\n')
         updated_lines = [line for line in lines if 'AWS_SESSION_TOKEN_PLACEHOLDER' not in line]
         updated_script = '\n'.join(updated_lines)
@@ -201,6 +199,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
     return vpc_id, rds_security_group_id, ec2_security_group_id
 
 def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_sg_name, skip_rds=False):
+
     print("\n[SECTION] Pulizia Risorse AWS")
     if skip_rds:
         print("-" * 50 + " (Skip RDS)")
@@ -462,13 +461,14 @@ def setup_sns_notification(region, topic_name, email_address):
     return topic_arn
 
 def main():
+
     if "--clean" in os.sys.argv:
         print("\n[SECTION] Pulizia Risorse AWS")
         print("-" * 50)
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
         
-        # Verifica se il flag --nords è presente
+        # verifico se il flag --nords è presente
         skip_rds = "--nords" in os.sys.argv
         delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup', skip_rds)
         return
@@ -631,7 +631,6 @@ def main():
         print("")
         print("[2] (Opzionale) Configura Network Load Balancer")
         print("    python scripts/infrastructure/setup_nlb.py")
-        print("    Per verificare lo stato: python scripts/infrastructure/check_nlb_health.py")
         print("")
         print("[3] Aggiorna i file di configurazione Java locali")
         print("    python scripts/infrastructure/update_java_config_on_ec2.py")

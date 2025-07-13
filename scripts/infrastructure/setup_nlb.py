@@ -29,11 +29,11 @@ def read_deploy_config():
     return config
 
 def get_default_vpc_and_subnets(ec2_client):
-    """Ottiene la VPC di default e le sue subnet"""
+
     print("\n[SECTION] Recupero VPC e Subnet")
     print("-" * 50)
     
-    # VPC di default
+    # ottenfo VPC di default
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
     if not vpcs['Vpcs']:
         raise Exception("VPC di default non trovata")
@@ -41,7 +41,7 @@ def get_default_vpc_and_subnets(ec2_client):
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     print(f"[INFO] VPC di default: {vpc_id}")
     
-    # Subnet della VPC di default
+    # ottengo Subnet della VPC di default
     subnets = ec2_client.describe_subnets(
         Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
     )
@@ -55,7 +55,7 @@ def get_default_vpc_and_subnets(ec2_client):
     return vpc_id, subnet_ids
 
 def get_server_instance_id(ec2_client):
-    """Ottiene l'ID dell'istanza server MusicApp"""
+
     print("\n[SECTION] Recupero Istanza Server")
     print("-" * 50)
     
@@ -75,12 +75,12 @@ def get_server_instance_id(ec2_client):
     return instance_id
 
 def create_target_group(elbv2_client, vpc_id):
-    """Crea il Target Group per il NLB"""
+
     print("\n[SECTION] Creazione Target Group")
     print("-" * 50)
     
     try:
-        # Verifica se il target group esiste già
+        # verifico se il TG esiste già
         existing_tgs = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
         if existing_tgs['TargetGroups']:
             target_group_arn = existing_tgs['TargetGroups'][0]['TargetGroupArn']
@@ -110,12 +110,12 @@ def create_target_group(elbv2_client, vpc_id):
     return target_group_arn
 
 def create_nlb(elbv2_client, subnet_ids):
-    """Crea il Network Load Balancer"""
+
     print("\n[SECTION] Creazione Network Load Balancer")
     print("-" * 50)
     
     try:
-        # Verifica se il NLB esiste già
+        # verifico se il NLB esiste già
         existing_nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
         if existing_nlbs['LoadBalancers']:
             nlb = existing_nlbs['LoadBalancers'][0]
@@ -127,7 +127,7 @@ def create_nlb(elbv2_client, subnet_ids):
         if "LoadBalancerNotFound" not in str(e):
             raise
     
-    # Crea nuovo NLB
+    # nuovo NLB
     response = elbv2_client.create_load_balancer(
         Name=NLB_NAME,
         Subnets=subnet_ids[:2],  # NLB richiede almeno 2 subnet
@@ -146,7 +146,7 @@ def create_nlb(elbv2_client, subnet_ids):
     print(f"[SUCCESS] Network Load Balancer '{NLB_NAME}' creato: {nlb_dns}")
     print(f"[INFO] NLB ARN: {nlb_arn}")
     
-    # Attende che il NLB sia attivo
+    # attendo che il NLB sia attivo
     print("[INFO] Attesa che il NLB diventi attivo...")
     waiter = elbv2_client.get_waiter('load_balancer_available')
     waiter.wait(LoadBalancerArns=[nlb_arn])
@@ -155,12 +155,12 @@ def create_nlb(elbv2_client, subnet_ids):
     return nlb_arn, nlb_dns
 
 def create_listener(elbv2_client, nlb_arn, target_group_arn):
-    """Crea il listener per il NLB"""
+
     print("\n[SECTION] Creazione Listener NLB")
     print("-" * 50)
     
     try:
-        # Verifica se il listener esiste già
+        # verifico se il listener esiste già
         existing_listeners = elbv2_client.describe_listeners(LoadBalancerArn=nlb_arn)
         for listener in existing_listeners['Listeners']:
             if listener['Port'] == NLB_PORT:
@@ -171,7 +171,7 @@ def create_listener(elbv2_client, nlb_arn, target_group_arn):
         if "LoadBalancerNotFound" not in str(e):
             raise
     
-    # Crea nuovo listener
+    # nuovo listener
     response = elbv2_client.create_listener(
         LoadBalancerArn=nlb_arn,
         Protocol='TCP',
@@ -194,7 +194,7 @@ def register_target(elbv2_client, target_group_arn, instance_id):
     print("\n[SECTION] Registrazione Target")
     print("-" * 50)
     
-    # Verifica se il target è già registrato
+    # verifico se il target è già registrato
     try:
         response = elbv2_client.describe_target_health(TargetGroupArn=target_group_arn)
         for target in response['TargetHealthDescriptions']:
@@ -205,7 +205,7 @@ def register_target(elbv2_client, target_group_arn, instance_id):
     except ClientError:
         pass
     
-    # Registra il target
+    # regustro il target
     elbv2_client.register_targets(
         TargetGroupArn=target_group_arn,
         Targets=[
@@ -218,7 +218,7 @@ def register_target(elbv2_client, target_group_arn, instance_id):
     
     print(f"[SUCCESS] Istanza {instance_id} registrata nel target group")
     
-    # Attende che il target sia healthy
+    # attendo che il target sia healthy
     print("[INFO] Attesa che il target diventi healthy...")
     max_attempts = 20
     for attempt in range(max_attempts):
@@ -254,7 +254,7 @@ def update_deploy_config(nlb_dns, nlb_port):
     with open(config_path, 'r') as f:
         config = json.load(f)
     
-    # Aggiunge le informazioni del NLB
+    # aggiungo le informazioni del NLB al deploy_config.json
     config['nlb_dns'] = nlb_dns
     config['nlb_port'] = nlb_port
     config['nlb_enabled'] = True
@@ -267,14 +267,14 @@ def update_deploy_config(nlb_dns, nlb_port):
     print(f"[INFO] NLB Port: {nlb_port}")
 
 def cleanup_nlb_resources():
-    """Elimina tutte le risorse del NLB"""
+
     print("\n[SECTION] Pulizia Risorse NLB")
     print("-" * 50)
     
     elbv2_client = boto3.client('elbv2', region_name=REGION)
     
     try:
-        # Elimina il Load Balancer
+        # elimino il Load Balancer
         try:
             nlbs = elbv2_client.describe_load_balancers(Names=[NLB_NAME])
             if nlbs['LoadBalancers']:
@@ -282,7 +282,6 @@ def cleanup_nlb_resources():
                 elbv2_client.delete_load_balancer(LoadBalancerArn=nlb_arn)
                 print(f"[INFO] Network Load Balancer '{NLB_NAME}' eliminato")
                 
-                # Attende che il NLB sia eliminato
                 print("[INFO] Attesa eliminazione del NLB...")
                 waiter = elbv2_client.get_waiter('load_balancers_deleted')
                 waiter.wait(LoadBalancerArns=[nlb_arn])
@@ -293,7 +292,7 @@ def cleanup_nlb_resources():
             else:
                 raise
         
-        # Elimina il Target Group
+        # elimino il TG
         try:
             target_groups = elbv2_client.describe_target_groups(Names=[TARGET_GROUP_NAME])
             if target_groups['TargetGroups']:
@@ -306,13 +305,12 @@ def cleanup_nlb_resources():
             else:
                 raise
         
-        # Rimuove le informazioni del NLB dalla configurazione
+        # rimuovo le informazioni del NLB dal deploy_config.json
         config_path = os.path.join(os.path.dirname(__file__), 'deploy_config.json')
         if os.path.exists(config_path):
             with open(config_path, 'r') as f:
                 config = json.load(f)
             
-            # Rimuove le chiavi del NLB
             config.pop('nlb_dns', None)
             config.pop('nlb_port', None)
             config.pop('nlb_enabled', None)
@@ -334,32 +332,23 @@ def main():
         return
     
     try:
-        # Legge la configurazione di deploy
         deploy_config = read_deploy_config()
         
-        # Inizializza i client AWS
         ec2_client = boto3.client('ec2', region_name=REGION)
         elbv2_client = boto3.client('elbv2', region_name=REGION)
         
-        # Ottiene VPC e subnet
         vpc_id, subnet_ids = get_default_vpc_and_subnets(ec2_client)
         
-        # Ottiene l'ID dell'istanza server
         server_instance_id = get_server_instance_id(ec2_client)
         
-        # Crea il target group
         target_group_arn = create_target_group(elbv2_client, vpc_id)
         
-        # Crea il Network Load Balancer
         nlb_arn, nlb_dns = create_nlb(elbv2_client, subnet_ids)
         
-        # Crea il listener
         listener_arn = create_listener(elbv2_client, nlb_arn, target_group_arn)
         
-        # Registra l'istanza server nel target group
         register_target(elbv2_client, target_group_arn, server_instance_id)
         
-        # Aggiorna la configurazione di deploy
         update_deploy_config(nlb_dns, NLB_PORT)
         
         print("\n[SUCCESS] Setup Network Load Balancer completato!")
