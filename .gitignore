@@ -1,10 +1,6 @@
-Progetto.pem
 .github
-scripts/infrastructure/Progetto.pem
 scripts/infrastructure/*.yaml
 scripts/infrastructure/*.txt
 scripts/infrastructure/*.lnk
-mvnProject
 .env
 credentials.*
-scripts/infrastructure/manual
