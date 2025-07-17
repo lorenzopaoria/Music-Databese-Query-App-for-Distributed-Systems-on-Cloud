@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Scanner; // Import for reading user input
 
 public class DatabaseClient {
-    private static final String SERVER_HOST = "98.84.144.60";
+    private static final String SERVER_HOST = "52.55.16.234";
     private static final int SERVER_PORT = 8080;
 
     private static final List<UserTest> TEST_USERS = new ArrayList<>();

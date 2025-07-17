@@ -786,7 +786,7 @@ def main():
             server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
             print(f"\n[INFO] Istanza MusicAppServer esistente e in esecuzione: {server_instance_id}. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
         else:
-            print("\n[STEP] Deploy dell'istanza EC2 'MusicAppServer'...")
+            print("[SECTION] Deploy Istanza EC2 MusicAppServer")
             server_instances = ec2_client.run_instances(
                 ImageId=AMI_ID,
                 InstanceType=INSTANCE_TYPE,
@@ -849,19 +849,11 @@ def main():
         print("    docker logs -f musicapp-server")
         print("")
         print("[7] Monitoraggio live log SNS (richiede coda SQS):")
-        print("    python scripts/infrastructure/monitor_sns_logs.py")
-        print("")
-        print("[8] Lettura log SNS esistenti dalla coda SQS:")
-        print("    python scripts/infrastructure/read_sns_logs.py")
+        print("    python scripts/infrastructure/monitor_sqs.py")
         print("")
         print("[NOTA] Se hai configurato il NLB, il client si connetterà automaticamente")
         print("       tramite il Load Balancer invece che direttamente all'EC2")
         print("")
-        print("[INFO] Sistema di logging SNS->SQS configurato automaticamente:")
-        print(f"       - Topic SNS: {topic_name}")
-        print(f"       - Coda SQS: {queue_name}")
-        print("       - Tutti i messaggi SNS vengono salvati nella coda per 14 giorni")
-        print("       - Monitoraggio live: monitor_sns_logs.py")
         print("=" * 60)
 
     except ClientError as e:
