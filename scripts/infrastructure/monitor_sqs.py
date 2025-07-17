@@ -77,23 +77,59 @@ def monitor_queue():
         
         processed_messages = set()
         
-        # leggo solo messaggi nuovi
-        existing_response = sqs_client.receive_message(
-            QueueUrl=queue_url,
-            MaxNumberOfMessages=10,
-            WaitTimeSeconds=1,
-            AttributeNames=['All']
-        )
+        print(f"[INFO] Lettura messaggi esistenti...")
+        existing_count = 0
         
-        for msg in existing_response.get('Messages', []):
-            processed_messages.add(msg.get('MessageId'))
+        while True:
+            existing_response = sqs_client.receive_message(
+                QueueUrl=queue_url,
+                MaxNumberOfMessages=10,
+                WaitTimeSeconds=1,
+                AttributeNames=['All'],
+                MessageAttributeNames=['All']
+            )
+            
+            existing_messages = existing_response.get('Messages', [])
+            if not existing_messages:
+                break
+                
+            for message in existing_messages:
+                message_id = message.get('MessageId')
+                if message_id not in processed_messages:
+                    try:
+                        sns_message = json.loads(message['Body'])
+                        log_entry = {
+                            'timestamp': sns_message.get('Timestamp'),
+                            'message_id': sns_message.get('MessageId'),
+                            'subject': sns_message.get('Subject'),
+                            'message': sns_message.get('Message'),
+                            'topic_arn': sns_message.get('TopicArn'),
+                            'type': sns_message.get('Type'),
+                            'receipt_handle': message['ReceiptHandle']
+                        }
+                        
+                        processed_messages.add(message_id)
+                        existing_count += 1
+                        timestamp = format_timestamp(log_entry['timestamp'])
+
+                        print(f"\n[EXISTING] MESSAGGIO #{existing_count} - {timestamp}")
+                        print(f"           Subject: {log_entry['subject'] or 'N/A'}")
+                        print(f"           Message: {log_entry['message'][:150]}{'...' if len(log_entry['message'] or '') > 150 else ''}")
+                        print(f"           Topic: {log_entry['topic_arn'].split(':')[-1] if log_entry['topic_arn'] else 'N/A'}")
+                        print("-" * 60)
+                        
+                    except json.JSONDecodeError:
+                        print(f"[WARNING] Messaggio esistente non JSON: {message['Body'][:100]}...")
         
-        if existing_response.get('Messages'):
-            print(f"[INFO] Trovati {len(existing_response['Messages'])} messaggi esistenti (ignorati)")
-            print("[INFO] Usa 'python deploy_music_app.py --read-logs' per leggerli")
-            print("-" * 60)
+        if existing_count > 0:
+            print(f"\n[INFO] Caricati {existing_count} messaggi esistenti")
+        else:
+            print(f"[INFO] Nessun messaggio esistente trovato")
         
-        message_count = 0
+        print(f"[INFO] Ora in attesa di nuovi messaggi...")
+        print("-" * 60)
+        
+        message_count = existing_count
         
         while True:
             try:
