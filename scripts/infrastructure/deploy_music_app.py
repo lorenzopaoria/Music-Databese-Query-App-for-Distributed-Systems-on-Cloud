@@ -324,6 +324,39 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             print(f"[ERROR] durante l'eliminazione della Key Pair in AWS: {e}")
             raise
 
+    # elimino SNS e SQS
+    print("[STEP] Eliminazione risorse SNS e SQS...")
+    try:
+        sns_client = boto3.client('sns', region_name=REGION)
+        sqs_client = boto3.client('sqs', region_name=REGION)
+        
+        queue_name = 'musicapp-sns-logging-queue'
+        try:
+            queue_url = sqs_client.get_queue_url(QueueName=queue_name)['QueueUrl']
+            sqs_client.delete_queue(QueueUrl=queue_url)
+            print(f"[INFO] Coda SQS '{queue_name}' eliminata.")
+        except ClientError as e:
+            if 'AWS.SimpleQueueService.NonExistentQueue' in str(e):
+                print(f"[INFO] Coda SQS '{queue_name}' non trovata o già eliminata.")
+            else:
+                print(f"[WARNING] Errore nell'eliminazione della coda SQS: {e}")
+        
+        topic_name = 'musicapp-server-setup-complete'
+        try:
+            topics = sns_client.list_topics()
+            for topic in topics.get('Topics', []):
+                if topic_name in topic['TopicArn']:
+                    sns_client.delete_topic(TopicArn=topic['TopicArn'])
+                    print(f"[INFO] Topic SNS '{topic_name}' eliminato.")
+                    break
+            else:
+                print(f"[INFO] Topic SNS '{topic_name}' non trovato o già eliminato.")
+        except Exception as e:
+            print(f"[WARNING] Errore nell'eliminazione del topic SNS: {e}")
+            
+    except Exception as e:
+        print(f"[WARNING] Errore durante la pulizia di SNS/SQS: {e}")
+
     print("[SUCCESS] Pulizia delle risorse AWS completata.")
 
 
@@ -460,6 +493,173 @@ def setup_sns_notification(region, topic_name, email_address):
         raise
     return topic_arn
 
+def setup_sqs_logging_queue(region, queue_name, topic_arn):
+
+    print("\n[SECTION] Coda SQS per Logging SNS")
+    print("-" * 50)
+
+    sqs_client = boto3.client('sqs', region_name=region)
+    sns_client = boto3.client('sns', region_name=region)
+    
+    try:
+        queue_response = sqs_client.create_queue(
+            QueueName=queue_name,
+            Attributes={
+                'MessageRetentionPeriod': '1209600',
+                'VisibilityTimeoutSeconds': '300',
+                'ReceiveMessageWaitTimeSeconds': '20' 
+            }
+        )
+        queue_url = queue_response['QueueUrl']
+        print(f"[SUCCESS] Coda SQS creata: {queue_url}")
+        
+        queue_attributes = sqs_client.get_queue_attributes(
+            QueueUrl=queue_url,
+            AttributeNames=['QueueArn']
+        )
+        queue_arn = queue_attributes['Attributes']['QueueArn']
+        print(f"[INFO] ARN della coda: {queue_arn}")
+        
+        queue_policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"Service": "sns.amazonaws.com"},
+                    "Action": "sqs:SendMessage",
+                    "Resource": queue_arn,
+                    "Condition": {
+                        "ArnEquals": {
+                            "aws:SourceArn": topic_arn
+                        }
+                    }
+                }
+            ]
+        }
+        
+        sqs_client.set_queue_attributes(
+            QueueUrl=queue_url,
+            Attributes={
+                'Policy': json.dumps(queue_policy)
+            }
+        )
+        print("[SUCCESS] Policy di accesso configurata per la coda SQS")
+        
+        # Sottoscrivi la coda SQS al topic SNS
+        subscription_response = sns_client.subscribe(
+            TopicArn=topic_arn,
+            Protocol='sqs',
+            Endpoint=queue_arn
+        )
+        print(f"[SUCCESS] Coda SQS sottoscritta al topic SNS per logging")
+        print(f"[INFO] Subscription ARN: {subscription_response['SubscriptionArn']}")
+        
+        return queue_url, queue_arn
+        
+    except ClientError as e:
+        if 'QueueAlreadyExists' in str(e):
+            # La coda esiste già, ottieni l'URL
+            queue_url = sqs_client.get_queue_url(QueueName=queue_name)['QueueUrl']
+            queue_attributes = sqs_client.get_queue_attributes(
+                QueueUrl=queue_url,
+                AttributeNames=['QueueArn']
+            )
+            queue_arn = queue_attributes['Attributes']['QueueArn']
+            print(f"[INFO] Coda SQS già esistente: {queue_url}")
+            
+            # Verifica se è già sottoscritta
+            subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
+            already_subscribed = any(
+                sub['Endpoint'] == queue_arn and sub['Protocol'] == 'sqs'
+                for sub in subscriptions['Subscriptions']
+            )
+            
+            if not already_subscribed:
+                # Sottoscrivi se non è già fatto
+                subscription_response = sns_client.subscribe(
+                    TopicArn=topic_arn,
+                    Protocol='sqs',
+                    Endpoint=queue_arn
+                )
+                print(f"[SUCCESS] Coda SQS sottoscritta al topic SNS per logging")
+            else:
+                print(f"[INFO] Coda SQS già sottoscritta al topic SNS")
+            
+            return queue_url, queue_arn
+        else:
+            print(f"[ERROR] Nella creazione della coda SQS: {e}")
+            raise
+    except Exception as e:
+        print(f"[ERROR] Setup coda SQS logging: {e}")
+        raise
+
+def read_sns_logs_from_sqs(region, queue_url, max_messages=10):
+
+    print("\n[SECTION] Lettura Log SNS da SQS")
+    print("-" * 50)
+
+    sqs_client = boto3.client('sqs', region_name=region)
+    
+    try:
+        response = sqs_client.receive_message(
+            QueueUrl=queue_url,
+            MaxNumberOfMessages=max_messages,
+            WaitTimeSeconds=1,
+            AttributeNames=['All'],
+            MessageAttributeNames=['All']
+        )
+        
+        messages = response.get('Messages', [])
+        if not messages:
+            print("[INFO] Nessun messaggio presente nella coda di logging")
+            return []
+        
+        log_entries = []
+        for message in messages:
+            try:
+                sns_message = json.loads(message['Body'])
+                log_entry = {
+                    'timestamp': sns_message.get('Timestamp'),
+                    'message_id': sns_message.get('MessageId'),
+                    'subject': sns_message.get('Subject'),
+                    'message': sns_message.get('Message'),
+                    'topic_arn': sns_message.get('TopicArn'),
+                    'receipt_handle': message['ReceiptHandle']
+                }
+                log_entries.append(log_entry)
+                
+                print(f"[LOG] {log_entry['timestamp']} - {log_entry['subject']}")
+                print(f"      Message: {log_entry['message'][:100]}...")
+                print(f"      Topic: {log_entry['topic_arn']}")
+                print("-" * 30)
+                
+            except json.JSONDecodeError:
+                print(f"[WARNING] Messaggio non JSON: {message['Body'][:100]}...")
+        
+        print(f"[INFO] Trovati {len(log_entries)} messaggi di log")
+        return log_entries
+        
+    except Exception as e:
+        print(f"[ERROR] Lettura log SQS: {e}")
+        raise
+
+def cleanup_sqs_messages(region, queue_url, receipt_handles):
+
+    if not receipt_handles:
+        return
+    
+    sqs_client = boto3.client('sqs', region_name=region)
+    
+    try:
+        for receipt_handle in receipt_handles:
+            sqs_client.delete_message(
+                QueueUrl=queue_url,
+                ReceiptHandle=receipt_handle
+            )
+        print(f"[SUCCESS] Eliminati {len(receipt_handles)} messaggi processati dalla coda")
+    except Exception as e:
+        print(f"[ERROR] Pulizia messaggi SQS: {e}")
+
 def main():
 
     if "--clean" in os.sys.argv:
@@ -472,7 +672,6 @@ def main():
         skip_rds = "--nords" in os.sys.argv
         delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup', skip_rds)
         return
-
 
     print("\n[SECTION] Deploy Risorse AWS")
     print("-" * 50)
@@ -560,6 +759,10 @@ def main():
         email_address = 'lorenzopaoria@icloud.com'
         topic_arn = setup_sns_notification(REGION, topic_name, email_address)
         
+        # 6. setup SQS logging queue per tutti i messaggi SNS
+        queue_name = 'musicapp-sns-logging-queue'
+        queue_url, queue_arn = setup_sqs_logging_queue(REGION, queue_name, topic_arn)
+        
         script_dir = os.path.dirname(os.path.abspath(__file__))
         user_data_script_path = os.path.join(script_dir, 'user_data_script.sh')
         with open(user_data_script_path, 'r') as f:
@@ -567,7 +770,7 @@ def main():
 
         user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
 
-        # 6. deploy istanza EC2 MusicAppServer (o usa esistente)
+        # 7. deploy istanza EC2 MusicAppServer (o usa esistente)
         server_public_ip = None
         server_private_ip = None
         server_instances_found = ec2_client.describe_instances(
@@ -645,8 +848,20 @@ def main():
         print("[6] Log del container Docker del server:")
         print("    docker logs -f musicapp-server")
         print("")
+        print("[7] Monitoraggio live log SNS (richiede coda SQS):")
+        print("    python scripts/infrastructure/monitor_sns_logs.py")
+        print("")
+        print("[8] Lettura log SNS esistenti dalla coda SQS:")
+        print("    python scripts/infrastructure/read_sns_logs.py")
+        print("")
         print("[NOTA] Se hai configurato il NLB, il client si connetterà automaticamente")
         print("       tramite il Load Balancer invece che direttamente all'EC2")
+        print("")
+        print("[INFO] Sistema di logging SNS->SQS configurato automaticamente:")
+        print(f"       - Topic SNS: {topic_name}")
+        print(f"       - Coda SQS: {queue_name}")
+        print("       - Tutti i messaggi SNS vengono salvati nella coda per 14 giorni")
+        print("       - Monitoraggio live: monitor_sns_logs.py")
         print("=" * 60)
 
     except ClientError as e:

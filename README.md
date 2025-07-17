@@ -19,6 +19,7 @@ Questo progetto implementa una piattaforma di streaming musicale distribuita che
   - VPC e Security Groups
   - Load Balancer (Network Load Balancer)
   - SNS (Simple Notification Service)
+  - SQS (Simple Queue Service)
 - AWS CLI configurato
 - Git configurato
 
@@ -82,6 +83,7 @@ python deploy_music_app.py
 - Configura tutti i Security Groups necessari
 - Compila e avvia automaticamente il server Java sull'istanza EC2
 - Crea un SNS per avvisare il completamento del setup per l'istanza EC2
+- Crea una coda SQS per conservare tutti i messaggi SNS
 
 **Tempo stimato:** 15-20 minuti
 
@@ -155,6 +157,33 @@ python update_java_config_on_ec2.py
 - **Con NLB**: Client → Network Load Balancer → Server EC2
 - **Senza NLB**: Client → Server EC2 (connessione diretta)
 
+### 5: Monitoraggio Log SNS/SQS
+
+Il sistema include un'infrastruttura di logging automatica che registra tutti i messaggi SNS in una coda SQS per audit e monitoraggio.
+
+#### Monitoraggio Live dei Log
+
+Per visualizzare in tempo reale i nuovi messaggi SNS:
+
+```bash
+cd scripts/infrastructure
+python monitor_sqs.py
+```
+
+**Cosa fa questo script:**
+
+- Si connette alla coda SQS di logging (`musicapp-sns-logging-queue`)
+- Monitora continuamente per nuovi messaggi SNS
+- Visualizza istantaneamente ogni nuovo messaggio ricevuto
+- Ignora i messaggi già presenti (mostra solo quelli nuovi)
+
+**Caratteristiche del Sistema di Logging:**
+
+- **Persistenza**: I messaggi vengono conservati per 14 giorni
+- **Audit Completo**: Tutti i messaggi SNS vengono automaticamente registrati
+- **Monitoraggio Real-time**: Visualizzazione live dei nuovi eventi
+- **Export**: Possibilità di esportare i log in formato JSON
+
 ## Architettura del Sistema
 
 ### Componenti
@@ -166,8 +195,8 @@ python update_java_config_on_ec2.py
    - RDS (database PostgreSQL)
    - NLB (Network Load Balancer) - **Opzionale**
    - SNS (notifiche)
+   - SQS (coda per logging SNS)
    - Security Groups (firewall)
-   - CloudWatch (monitoring)
 4. **GitHub Actions**: Pipeline CI/CD per deployment automatico
 5. **Docker**: Containerizzazione dell'applicazione server
 
@@ -247,4 +276,4 @@ python setup_nlb.py --clean
 
 ## Licenza
 
-Questo progetto è sviluppato per scopi educativi nell'ambito del corso di Sistemi Cloud e Laboratorio.
+Questo progetto è sviluppato per scopi educativi nell'ambito del corso di Sistemi Cloud

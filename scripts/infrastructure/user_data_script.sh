@@ -7,7 +7,7 @@ sudo systemctl start docker
 sudo usermod -aG docker ec2-user
 newgrp docker
 
-# configura AWS CLI per ec2-user
+# configura AWS CLI per ec2-user, senza limitazioni learner lab avrei creato un ruolo per abilitare la ec2 a mandare messaggi tramite sns
 sudo -u ec2-user mkdir -p /home/ec2-user/.aws
 sudo -u ec2-user cat <<EOF > /home/ec2-user/.aws/credentials
 [default]
