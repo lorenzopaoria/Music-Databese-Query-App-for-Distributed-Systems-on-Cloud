@@ -784,7 +784,7 @@ def main():
             server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
             print(f"\n[INFO] Istanza MusicAppServer esistente e in esecuzione: {server_instance_id}. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
         else:
-            print("[SECTION] Deploy Istanza EC2 MusicAppServer")
+            print("\n[SECTION] Deploy Istanza EC2 MusicAppServer")
             print("-" * 50)
             server_instances = ec2_client.run_instances(
                 ImageId=AMI_ID,

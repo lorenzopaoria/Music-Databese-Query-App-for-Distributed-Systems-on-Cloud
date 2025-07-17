@@ -14,7 +14,7 @@ public class DatabaseConfig {
             properties.load(fis);
         } catch (IOException e) {
             // per vedere se funziona intanto
-            properties.setProperty("server.host", "172.31.83.103");
+            properties.setProperty("server.host", "172.31.17.237");
             properties.setProperty("server.port", "8080");
             properties.setProperty("database.url", "jdbc:postgresql://music-db-app-rds.cflenc1uoxga.us-east-1.rds.amazonaws.com:5432/musicdb");
             properties.setProperty("database.user", "dbadmin");
