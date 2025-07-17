@@ -3,7 +3,6 @@ import json
 import time
 import os
 from botocore.exceptions import ClientError
-from dotenv import load_dotenv
 
 # configurazione NLB
 REGION = 'us-east-1'
