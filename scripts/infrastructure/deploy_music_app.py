@@ -506,7 +506,7 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
             QueueName=queue_name,
             Attributes={
                 'MessageRetentionPeriod': '1209600',
-                'VisibilityTimeoutSeconds': '300',
+                'VisibilityTimeout': '300',
                 'ReceiveMessageWaitTimeSeconds': '20' 
             }
         )
