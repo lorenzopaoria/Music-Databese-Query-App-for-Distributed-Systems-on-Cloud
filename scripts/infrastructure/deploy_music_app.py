@@ -6,95 +6,97 @@ import json
 import configparser
 from botocore.exceptions import ClientError
 
-# configurazione AWS
-REGION = 'us-east-1'
+# configurazione parametri AWS
+REGION = 'us-east-1'     
 KEY_PAIR_NAME = 'my-ec2-key'
 AMI_ID = 'ami-09e6f87a47903347c'
 INSTANCE_TYPE = 't2.micro'
 
-# configurazione Database RDS
+# configurazione parametri Database RDS
 DB_INSTANCE_IDENTIFIER = 'music-db-app-rds'
 DB_ENGINE = 'postgres'
 DB_ENGINE_VERSION = '17.4'
 DB_INSTANCE_CLASS = 'db.t3.micro'
-DB_ALLOCATED_STORAGE = 20
+DB_ALLOCATED_STORAGE = 20 
 DB_MASTER_USERNAME = 'dbadmin'
 DB_MASTER_PASSWORD = '12345678'
 DB_NAME = 'musicdb'
 
+# legge credenziali AWS
 def read_aws_credentials():
 
     credentials_path = os.path.expanduser('~/.aws/credentials')
+    
     if not os.path.exists(credentials_path):
         raise Exception(f"File delle credenziali AWS non trovato: {credentials_path}")
     
     config = configparser.ConfigParser()
     config.read(credentials_path)
     
-    if 'default' not in config:
-        raise Exception("Sezione [default] non trovata nel file delle credenziali AWS")
-    
+    # estrazione delle credenziali
     credentials = {
         'aws_access_key_id': config['default'].get('aws_access_key_id'),
         'aws_secret_access_key': config['default'].get('aws_secret_access_key'),
         'aws_session_token': config['default'].get('aws_session_token')  # Può essere None
     }
     
-    if not credentials['aws_access_key_id'] or not credentials['aws_secret_access_key']:
-        raise Exception("Credenziali AWS incomplete nel file ~/.aws/credentials")
-    
     print("[INFO] Credenziali AWS lette correttamente dal file locale")
     return credentials
 
+# aggiornamento dello script user_data con le credenziali AWS
 def update_user_data_with_credentials(user_data_script, credentials):
 
     updated_script = user_data_script.replace(
         'AWS_ACCESS_KEY_ID_PLACEHOLDER', credentials['aws_access_key_id']
     ).replace(
         'AWS_SECRET_ACCESS_KEY_PLACEHOLDER', credentials['aws_secret_access_key']
+    ).replace(
+        'AWS_SESSION_TOKEN_PLACEHOLDER', credentials['aws_session_token']
     )
-    
-    if credentials['aws_session_token']:
-        updated_script = updated_script.replace(
-            'AWS_SESSION_TOKEN_PLACEHOLDER', credentials['aws_session_token']
-        )
-    else:
-        lines = updated_script.split('\n')
-        updated_lines = [line for line in lines if 'AWS_SESSION_TOKEN_PLACEHOLDER' not in line]
-        updated_script = '\n'.join(updated_lines)
     
     return updated_script
 
+# creazione chiave EC2
 def get_key_pair(ec2_client, key_name):
 
     print("\n[SECTION] Gestione Chiave EC2")
     print("-" * 50)
+    
     try:
+        # verifica dell'esistenza della chiave EC2
         response = ec2_client.describe_key_pairs(KeyNames=[key_name])
         print(f"[INFO] La chiave EC2 '{key_name}' è già presente nel tuo account AWS.")
         return response['KeyPairs'][0]['KeyName']
     except ClientError as e:
         if "InvalidKeyPair.NotFound" in str(e):
             print(f"[INFO] La chiave EC2 '{key_name}' non è stata trovata. Avvio della creazione...")
+            
+            # creazione della nuova coppia di chiavi
             key_pair = ec2_client.create_key_pair(KeyName=key_name)
+            
+            # salvataggio della chiave privata in un file locale
             with open(f"{key_name}.pem", "w") as f:
                 f.write(key_pair['KeyMaterial'])
+            
+            # impostazione dei permessi sicuri per il file della chiave
             os.chmod(f"{key_name}.pem", 0o400)
             print(f"[SUCCESS] File '{key_name}.pem' creato e salvato localmente.")
             return key_pair['KeyName']
         else:
             raise
 
+# configurazione della rete e dei gruppi di sicurezza
 def create_vpc_and_security_groups(ec2_client, rds_client):
 
     print("\n[SECTION] VPC e Security Groups")
     print("-" * 50)
-    # VPC di default
+
+    # identificazione della VPC di default
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values':['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     print(f"[INFO] VPC di default individuata: {vpc_id}")
 
-    # creazione Security Group per RDS
+    # creazione del Security Group per RDS
     try:
         rds_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppRDSSecurityGroup',
@@ -105,6 +107,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         print(f"[SUCCESS] Security Group per RDS creata con ID: {rds_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
+            # recupero del Security Group esistente
             rds_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppRDSSecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
@@ -112,7 +115,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # creazione Security Group per EC2
+    # creazione del Security Group per EC2
     try:
         ec2_sg_response = ec2_client.create_security_group(
             GroupName='MusicAppEC2SecurityGroup',
@@ -123,6 +126,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         print(f"[SUCCESS] Security Group per EC2 creata con ID: {ec2_security_group_id}")
     except ClientError as e:
         if 'InvalidGroup.Duplicate' in str(e):
+            # recupero del Security Group esistente
             ec2_security_group_id = ec2_client.describe_security_groups(
                 GroupNames=['MusicAppEC2SecurityGroup'], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
             )['SecurityGroups'][0]['GroupId']
@@ -130,14 +134,14 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # autorizzazioni per SG RDS (da EC2 SG)
+    # configurazione delle regole di accesso per RDS (da EC2)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=rds_security_group_id,
             IpPermissions=[
                 {
                     'IpProtocol': 'tcp',
-                    'FromPort': 5432, # Porta PostgreSQL
+                    'FromPort': 5432, # porta PostgreSQL
                     'ToPort': 5432,
                     'UserIdGroupPairs':[{'GroupId': ec2_security_group_id}]
                 }
@@ -150,27 +154,27 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # autorizzazioni per SG RDS da macchina locale (solo per inizializzazione DB, sviluppo)
-    try:
-        ec2_client.authorize_security_group_ingress(
-            GroupId=rds_security_group_id,
-            IpPermissions=[
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 5432, # Porta PostgreSQL
-                    'ToPort': 5432,
-                    'IpRanges':[{'CidrIp': '0.0.0.0/0', 'Description': 'Consenti accesso script locale per init DB (solo sviluppo)'}]
-                }
-            ]
-        )
-        print("[SUCCESS] Regola di ingresso per RDS autorizzata da 0.0.0.0/0 per inizializzazione locale.")
-    except ClientError as e:
-        if 'InvalidPermission.Duplicate' in str(e):
-            print("[INFO] Regola di ingresso per RDS già presente (0.0.0.0/0->RDS).")
-        else:
-            raise
-            
-    # autorizzazioni per EC2 (SSH e porta app)
+    # configurazione delle regole di accesso per RDS (da macchina locale per sviluppo)
+    # try:
+    #     ec2_client.authorize_security_group_ingress(
+    #         GroupId=rds_security_group_id,
+    #         IpPermissions=[
+    #             {
+    #                 'IpProtocol': 'tcp',
+    #                 'FromPort': 5432, # porta PostgreSQL
+    #                 'ToPort': 5432,
+    #                 'IpRanges':[{'CidrIp': '0.0.0.0/0', 'Description': 'Consenti accesso script locale per init DB (solo sviluppo)'}]
+    #             }
+    #         ]
+    #     )
+    #     print("[SUCCESS] Regola di ingresso per RDS autorizzata da 0.0.0.0/0 per inizializzazione locale.")
+    # except ClientError as e:
+    #     if 'InvalidPermission.Duplicate' in str(e):
+    #         print("[INFO] Regola di ingresso per RDS già presente (0.0.0.0/0->RDS).")
+    #     else:
+    #         raise
+    
+    # configurazione delle regole di accesso per EC2 (SSH e porta applicazione)
     try:
         ec2_client.authorize_security_group_ingress(
             GroupId=ec2_security_group_id,
@@ -198,6 +202,7 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
 
     return vpc_id, rds_security_group_id, ec2_security_group_id
 
+# pulizia delle risorse AWS create
 def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_sg_name, skip_rds=False):
 
     print("\n[SECTION] Pulizia Risorse AWS")
@@ -207,34 +212,43 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     else:
         print("-" * 50)
 
-    # termino EC2
+    # terminazione delle istanze EC2
     print("[STEP] Terminazione delle istanze EC2 in corso...")
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values':['MusicApp']}]
     )
     instance_ids =[]
+    
+    # raccolta degli ID delle istanze da terminare
     for reservation in instances['Reservations']:
         for instance in reservation['Instances']:
             if instance['State']['Name'] != 'terminated':
                 instance_ids.append(instance['InstanceId'])
+                
     if instance_ids:
+        # terminazione delle istanze
         ec2_client.terminate_instances(InstanceIds=instance_ids)
         print(f"[INFO] Istanze EC2 terminate: {instance_ids}. Attendo la conferma di terminazione...")
+        
+        # attesa della terminazione completa
         waiter = ec2_client.get_waiter('instance_terminated')
         waiter.wait(InstanceIds=instance_ids)
         print("[SUCCESS] Tutte le istanze EC2 sono state terminate correttamente.")
     else:
         print("[INFO] Nessuna istanza EC2 'MusicApp' trovata da terminare.")
 
-    # elimino RDS solo se non specificato skip_rds
+    # eliminazione dell'istanza RDS (no flag --nords)
     if not skip_rds:
         print(f"[STEP] Eliminazione dell'istanza RDS '{rds_id}' in corso...")
         try:
+            # eliminazione del database RDS senza snapshot finale
             rds_client.delete_db_instance(
                 DBInstanceIdentifier=rds_id,
                 SkipFinalSnapshot=True
             )
             print(f"[INFO] Istanza RDS '{rds_id}' eliminata. Attesa della cancellazione...")
+            
+            # attesa della cancellazione completa
             waiter = rds_client.get_waiter('db_instance_deleted')
             waiter.wait(DBInstanceIdentifier=rds_id)
             print(f"[SUCCESS] Istanza RDS '{rds_id}' eliminata.")
@@ -246,12 +260,14 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     else:
         print(f"[SKIP] Eliminazione del database RDS '{rds_id}' saltata come richiesto.")
 
-    # elimino SG
+    # eliminazione dei Security Groups
     print("[STEP] Eliminazione dei Security Groups...")
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values':['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     
     sg_to_delete =[]
+    
+    # raccolta degli ID dei Security Groups da eliminare
     try:
         rds_sg_id = ec2_client.describe_security_groups(
             GroupNames=[rds_sg_name], Filters=[{'Name': 'vpc-id', 'Values':[vpc_id]}]
@@ -268,6 +284,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     except ClientError as e:
         if "InvalidGroup.NotFound" not in str(e): print(f"[ERROR] {e}")
 
+    # revoca delle regole di ingresso per evitare dipendenze
     for sg_id in sg_to_delete:
         try:
             sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
@@ -281,6 +298,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             if 'InvalidPermission.NotFound' not in str(e):
                 print(f"[WARNING] Impossibile revocare regole di ingresso per {sg_id}: {e}")
 
+    # eliminazione dei Security Groups
     for sg_name_current in[rds_sg_name, ec2_sg_name]:
         try:
             sg_id_current = ec2_client.describe_security_groups(
@@ -296,11 +314,14 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             else:
                 print(f"[ERROR] durante l'eliminazione del Security Group '{sg_name_current}': {e}")
     
-    # elimino Key Pair
+    # eliminazione della Key Pair EC2
     print(f"[STEP] Eliminazione della Key Pair '{key_name}'...")
     try:
+        # eliminazione della chiave da AWS
         ec2_client.delete_key_pair(KeyName=key_name)
         print(f"[INFO] Key Pair '{key_name}' eliminata da AWS.")
+        
+        # eliminazione del file locale
         if os.path.exists(f"{key_name}.pem"):
             try:
                 os.remove(f"{key_name}.pem")
@@ -312,6 +333,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     except ClientError as e:
         if "InvalidKeyPair.NotFound" in str(e):
             print(f"[INFO] Key Pair '{key_name}' non trovata o già eliminata in AWS.")
+            # tentativo di eliminazione del file locale anche se la chiave AWS non esiste
             if os.path.exists(f"{key_name}.pem"):
                 try:
                     os.remove(f"{key_name}.pem")
@@ -324,12 +346,13 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             print(f"[ERROR] durante l'eliminazione della Key Pair in AWS: {e}")
             raise
 
-    # elimino SNS e SQS
+    # eliminazione delle risorse SNS e SQS
     print("[STEP] Eliminazione risorse SNS e SQS...")
     try:
         sns_client = boto3.client('sns', region_name=REGION)
         sqs_client = boto3.client('sqs', region_name=REGION)
         
+        # eliminazione della coda SQS
         queue_name = 'musicapp-sns-logging-queue'
         try:
             queue_url = sqs_client.get_queue_url(QueueName=queue_name)['QueueUrl']
@@ -341,6 +364,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             else:
                 print(f"[WARNING] Errore nell'eliminazione della coda SQS: {e}")
         
+        # eliminazione del topic SNS
         topic_name = 'musicapp-server-setup-complete'
         try:
             topics = sns_client.list_topics()
@@ -359,17 +383,18 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
 
     print("[SUCCESS] Pulizia delle risorse AWS completata.")
 
-
+# inizializzazione del database PostgreSQL su RDS
 def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_sql, data_sql):
 
     print("\n[SECTION] Inizializzazione Database RDS")
     print("-" * 50)
     print(f"[INFO] Inizializzazione del database '{db_name}' su {rds_endpoint}...")
 
-    # connessione al database postgres
+    # connessione al database master PostgreSQL per gestione database
     conn_str_master = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
     conn = None
     try:
+        # tentativo di connessione con retry automatico
         for i in range(5):
             try:
                 conn = psycopg2.connect(conn_str_master)
@@ -384,7 +409,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
 
         cur = conn.cursor()
 
-        # 1. termina tutte le connessioni al database
+        # terminazione delle connessioni attive al database target
         print(f"[STEP] Terminazione delle connessioni attive al database '{db_name}'...")
         try:
             cur.execute(f"""
@@ -397,7 +422,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         except Exception as e:
             print(f"[WARNING] Errore nella terminazione delle connessioni: {e}")
 
-        # 2. elimino il database esistente (se esiste)
+        # eliminazione del database esistente
         print(f"[STEP] Tentativo di eliminazione del database '{db_name}' se esiste...")
         try:
             cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
@@ -406,7 +431,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             print(f"[ERROR] Nell'eliminazione del database '{db_name}': {e}")
             raise
 
-        # 3. creo il database
+        # creazione del nuovo database
         print(f"[STEP] Creazione del database '{db_name}'...")
         cur.execute(f"CREATE DATABASE {db_name};")
         print(f"[SUCCESS] Database '{db_name}' creato.")
@@ -414,7 +439,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         cur.close()
         conn.close()
 
-        # connetto al database per inizializzazione schema e dati
+        # connessione al database applicativo per inizializzazione schema e dati
         conn_str_app = f"dbname={db_name} user={db_username} password={db_password} host={rds_endpoint} port=5432"
         conn_app = None
         for i in range(5):
@@ -431,7 +456,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         conn_app.autocommit = True
         cur_app = conn_app.cursor()
 
-        # schema.sql
+        # esecuzione dello schema SQL
         print("[STEP] Esecuzione di schema.sql...")
         try:
             cur_app.execute(schema_sql)
@@ -440,7 +465,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             print(f"[ERROR] Nell'esecuzione dello schema SQL: {e}")
             raise
 
-        # data.sql
+        # esecuzione del file dati SQL
         print("[STEP] Esecuzione di data.sql...")
         try:
             cur_app.execute(data_sql)
@@ -460,23 +485,29 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         print(f"[ERROR] Inatteso durante l'inizializzazione del database: {e}")
         raise
     finally:
+        # pulizia delle connessioni
         if conn:
             conn.close()
         if 'conn_app' in locals() and conn_app:
             conn_app.close()
 
-
+# recupero dell'ID account AWS
 def get_account_id():
+
     sts = boto3.client('sts')
     return sts.get_caller_identity()['Account']
 
+# configurazione delle notifiche SNS
 def setup_sns_notification(region, topic_name, email_address):
+
     print("\n[SECTION] Notifiche SNS")
     print("-" * 50)
 
     sns_client = boto3.client('sns', region_name=region)
     topic_arn = None
+    
     try:
+        # creazione del topic SNS
         response = sns_client.create_topic(Name=topic_name)
         topic_arn = response['TopicArn']
         print(f"[SUCCESS] SNS topic creato: {topic_arn}")
@@ -485,6 +516,7 @@ def setup_sns_notification(region, topic_name, email_address):
         raise
 
     try:
+        # sottoscrizione email al topic SNS
         sns_client.subscribe(TopicArn=topic_arn, Protocol='email', Endpoint=email_address)
         print(f"[SUCCESS] Sottoscrizione email {email_address} al topic SNS completata.")
         print(f"[INFO] Conferma la sottoscrizione tramite il link che riceverai via email.")
@@ -493,6 +525,7 @@ def setup_sns_notification(region, topic_name, email_address):
         raise
     return topic_arn
 
+# configurazione della coda SQS per logging da SNS
 def setup_sqs_logging_queue(region, queue_name, topic_arn):
 
     print("\n[SECTION] Coda SQS per Logging SNS")
@@ -502,17 +535,19 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
     sns_client = boto3.client('sns', region_name=region)
     
     try:
+        # creazione della coda SQS personalizzata
         queue_response = sqs_client.create_queue(
             QueueName=queue_name,
             Attributes={
-                'MessageRetentionPeriod': '1209600',
-                'VisibilityTimeout': '300',
-                'ReceiveMessageWaitTimeSeconds': '20' 
+                'MessageRetentionPeriod': '1209600',  # 14 giorni
+                'VisibilityTimeout': '300',           # 5 minuti
+                'ReceiveMessageWaitTimeSeconds': '20'
             }
         )
         queue_url = queue_response['QueueUrl']
         print(f"[SUCCESS] Coda SQS creata: {queue_url}")
         
+        # recupero dell'ARN della coda
         queue_attributes = sqs_client.get_queue_attributes(
             QueueUrl=queue_url,
             AttributeNames=['QueueArn']
@@ -520,6 +555,7 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
         queue_arn = queue_attributes['Attributes']['QueueArn']
         print(f"[INFO] ARN della coda: {queue_arn}")
         
+        # configurazione della policy di accesso per SNS
         queue_policy = {
             "Version": "2012-10-17",
             "Statement": [
@@ -537,6 +573,7 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
             ]
         }
         
+        # applicazione della policy alla coda
         sqs_client.set_queue_attributes(
             QueueUrl=queue_url,
             Attributes={
@@ -545,7 +582,7 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
         )
         print("[SUCCESS] Policy di accesso configurata per la coda SQS")
         
-        # Sottoscrivi la coda SQS al topic SNS
+        # sottoscrizione della coda SQS al topic SNS
         subscription_response = sns_client.subscribe(
             TopicArn=topic_arn,
             Protocol='sqs',
@@ -558,7 +595,7 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
         
     except ClientError as e:
         if 'QueueAlreadyExists' in str(e):
-            # La coda esiste già, ottieni l'URL
+            # gestione della coda già esistente
             queue_url = sqs_client.get_queue_url(QueueName=queue_name)['QueueUrl']
             queue_attributes = sqs_client.get_queue_attributes(
                 QueueUrl=queue_url,
@@ -567,7 +604,7 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
             queue_arn = queue_attributes['Attributes']['QueueArn']
             print(f"[INFO] Coda SQS già esistente: {queue_url}")
             
-            # Verifica se è già sottoscritta
+            # verifica se è già sottoscritta al topic
             subscriptions = sns_client.list_subscriptions_by_topic(TopicArn=topic_arn)
             already_subscribed = any(
                 sub['Endpoint'] == queue_arn and sub['Protocol'] == 'sqs'
@@ -575,7 +612,7 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
             )
             
             if not already_subscribed:
-                # Sottoscrivi se non è già fatto
+                # sottoscrizione se non già presente
                 subscription_response = sns_client.subscribe(
                     TopicArn=topic_arn,
                     Protocol='sqs',
@@ -593,89 +630,26 @@ def setup_sqs_logging_queue(region, queue_name, topic_arn):
         print(f"[ERROR] Setup coda SQS logging: {e}")
         raise
 
-def read_sns_logs_from_sqs(region, queue_url, max_messages=10):
-
-    print("\n[SECTION] Lettura Log SNS da SQS")
-    print("-" * 50)
-
-    sqs_client = boto3.client('sqs', region_name=region)
-    
-    try:
-        response = sqs_client.receive_message(
-            QueueUrl=queue_url,
-            MaxNumberOfMessages=max_messages,
-            WaitTimeSeconds=1,
-            AttributeNames=['All'],
-            MessageAttributeNames=['All']
-        )
-        
-        messages = response.get('Messages', [])
-        if not messages:
-            print("[INFO] Nessun messaggio presente nella coda di logging")
-            return []
-        
-        log_entries = []
-        for message in messages:
-            try:
-                sns_message = json.loads(message['Body'])
-                log_entry = {
-                    'timestamp': sns_message.get('Timestamp'),
-                    'message_id': sns_message.get('MessageId'),
-                    'subject': sns_message.get('Subject'),
-                    'message': sns_message.get('Message'),
-                    'topic_arn': sns_message.get('TopicArn'),
-                    'receipt_handle': message['ReceiptHandle']
-                }
-                log_entries.append(log_entry)
-                
-                print(f"[LOG] {log_entry['timestamp']} - {log_entry['subject']}")
-                print(f"      Message: {log_entry['message'][:100]}...")
-                print(f"      Topic: {log_entry['topic_arn']}")
-                print("-" * 30)
-                
-            except json.JSONDecodeError:
-                print(f"[WARNING] Messaggio non JSON: {message['Body'][:100]}...")
-        
-        print(f"[INFO] Trovati {len(log_entries)} messaggi di log")
-        return log_entries
-        
-    except Exception as e:
-        print(f"[ERROR] Lettura log SQS: {e}")
-        raise
-
-def cleanup_sqs_messages(region, queue_url, receipt_handles):
-
-    if not receipt_handles:
-        return
-    
-    sqs_client = boto3.client('sqs', region_name=region)
-    
-    try:
-        for receipt_handle in receipt_handles:
-            sqs_client.delete_message(
-                QueueUrl=queue_url,
-                ReceiptHandle=receipt_handle
-            )
-        print(f"[SUCCESS] Eliminati {len(receipt_handles)} messaggi processati dalla coda")
-    except Exception as e:
-        print(f"[ERROR] Pulizia messaggi SQS: {e}")
-
 def main():
 
+    # gestione del comando di pulizia risorse
     if "--clean" in os.sys.argv:
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
         
-        # verifico se il flag --nords è presente
+        # verifica flag -nords per saltare l'eliminazione del db
         skip_rds = "--nords" in os.sys.argv
         delete_resources(ec2, rds, KEY_PAIR_NAME, DB_INSTANCE_IDENTIFIER, 'MusicAppRDSSecurityGroup', 'MusicAppEC2SecurityGroup', skip_rds)
         return
 
     print("\n[SECTION] Deploy Risorse AWS")
     print("-" * 50)
+    
+    # inizializzazione dei client AWS
     ec2_client = boto3.client('ec2', region_name=REGION)
     rds_client = boto3.client('rds', region_name=REGION)
 
+    # lettura dei file SQL per l'inizializzazione del database
     schema_sql_path = os.path.join(
         os.path.dirname(__file__),
         '..', '..', 'Database', 'postgreSQL', 'schema.sql'
@@ -690,23 +664,26 @@ def main():
         dati_sql_content = f.read()
 
     try:
-        # 0. Legge le credenziali AWS dal file locale
+        # STEP 1: lettura delle credenziali AWS dal file locale
         aws_credentials = read_aws_credentials()
         
-        # 1. ottengo o creo la Key Pair
+        # STEP 2: gestione della Key Pair EC2
         key_pair_name_actual = get_key_pair(ec2_client, KEY_PAIR_NAME)
 
-        # 2. creo VPC e SG
+        # STEP 3: configurazione VPC e Security Groups
         vpc_id, rds_security_group_id, ec2_security_group_id = create_vpc_and_security_groups(ec2_client, rds_client)
 
-        # 3. deploy istanza RDS
+        # STEP 4: deploy dell'istanza RDS PostgreSQL
         print(f"\n[STEP] Tentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'...")
         rds_endpoint = None
         try:
+            # verifica dell'esistenza dell'istanza RDS
             response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
             instance_status = response['DBInstances'][0]['DBInstanceStatus']
             rds_endpoint = response['DBInstances'][0]['Endpoint']['Address']
             print(f"[INFO] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' trovata con stato: {instance_status}.")
+            
+            # attesa che l'istanza sia disponibile
             if instance_status != 'available':
                 print(f"[INFO] Attesa che l'istanza RDS '{DB_INSTANCE_IDENTIFIER}' diventi 'available'...")
                 waiter = rds_client.get_waiter('db_instance_available')
@@ -717,6 +694,8 @@ def main():
         except ClientError as e:
             if "DBInstanceNotFound" in str(e):
                 print(f"[INFO] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' non trovata. Creazione in corso...")
+                
+                # creazione di una nuova istanza RDS
                 rds_client.create_db_instance(
                     DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER,
                     DBInstanceClass=DB_INSTANCE_CLASS,
@@ -730,6 +709,8 @@ def main():
                     PubliclyAccessible=True # Per debug e accesso locale, impostare a False per sicurezza in produzione
                 )
                 print(f"[INFO] Creazione dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}' avviata. Attesa che diventi 'available'...")
+                
+                # attesa che l'istanza sia disponibile
                 waiter = rds_client.get_waiter('db_instance_available')
                 waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
@@ -741,7 +722,7 @@ def main():
         if not rds_endpoint:
             raise Exception("Impossibile ottenere l'endpoint RDS.")
 
-        # 4. inizializzo il db con schema e dati
+        # STEP 5: inizializzazione del database con schema e dati
         print("[STEP] Inizializzazione del database RDS con schema e dati...")
         initialize_database(
             rds_endpoint=rds_endpoint,
@@ -752,25 +733,29 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # 5. setup SNS notification e modifico user_data_script
+        # STEP 6: configurazione delle notifiche SNS
         topic_name = 'musicapp-server-setup-complete'
         email_address = 'lorenzopaoria@icloud.com'
         topic_arn = setup_sns_notification(REGION, topic_name, email_address)
         
-        # 6. setup SQS logging queue per tutti i messaggi SNS
+        # STEP 7: configurazione della coda SQS per logging
         queue_name = 'musicapp-sns-logging-queue'
         queue_url, queue_arn = setup_sqs_logging_queue(REGION, queue_name, topic_arn)
         
+        # lettura e preparazione dello script user_data
         script_dir = os.path.dirname(os.path.abspath(__file__))
         user_data_script_path = os.path.join(script_dir, 'user_data_script.sh')
         with open(user_data_script_path, 'r') as f:
             user_data_script = f.read()
 
+        # aggiornamento dello script con le credenziali AWS
         user_data_script = update_user_data_with_credentials(user_data_script, aws_credentials)
 
-        # 7. deploy istanza EC2 MusicAppServer (o usa esistente)
+        # STEP 8: deploy dell'istanza EC2 MusicAppServer
         server_public_ip = None
         server_private_ip = None
+        
+        # verifica dell'esistenza di istanze server già attive
         server_instances_found = ec2_client.describe_instances(
             Filters=[
                 {'Name': 'tag:Name', 'Values':['MusicAppServer']},
@@ -779,11 +764,13 @@ def main():
         )['Reservations']
 
         if server_instances_found:
+            # utilizzo dell'istanza esistente
             server_instance_id = server_instances_found[0]['Instances'][0]['InstanceId']
             server_public_ip = server_instances_found[0]['Instances'][0].get('PublicIpAddress')
             server_private_ip = server_instances_found[0]['Instances'][0].get('PrivateIpAddress')
             print(f"\n[INFO] Istanza MusicAppServer esistente e in esecuzione: {server_instance_id}. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
         else:
+            # creazione di una nuova istanza EC2
             print("\n[SECTION] Deploy Istanza EC2 MusicAppServer")
             print("-" * 50)
             server_instances = ec2_client.run_instances(
@@ -806,14 +793,18 @@ def main():
             )
             server_instance_id = server_instances['Instances'][0]['InstanceId']
             print(f"[INFO] Istanza MusicAppServer avviata: {server_instance_id}. Attesa che sia 'running'...")
+            
+            # attesa che l'istanza sia in esecuzione
             waiter = ec2_client.get_waiter('instance_running')
             waiter.wait(InstanceIds=[server_instance_id])
+            
+            # recupero degli indirizzi IP
             server_instance_details = ec2_client.describe_instances(InstanceIds=[server_instance_id])
             server_public_ip = server_instance_details['Reservations'][0]['Instances'][0]['PublicIpAddress']
             server_private_ip = server_instance_details['Reservations'][0]['Instances'][0]['PrivateIpAddress']
             print(f"[SUCCESS] MusicAppServer è in esecuzione. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
 
-        # configurazione salvata in un file JSON
+        # STEP 9: salvataggio della configurazione in file JSON
         config = {
             "server_public_ip": server_public_ip,
             "server_private_ip": server_private_ip,
@@ -826,6 +817,8 @@ def main():
         with open("deploy_config.json", "w") as f:
             json.dump(config, f, indent=4)
         print("\n[SUCCESS] Configurazione salvata in 'deploy_config.json'.")
+
+        # STEP 10: visualizzazione della guida al deploy
         print("\n[GUIDE] Guida Rapida Deploy Applicazione")
         print("=" * 60)
         print("[1] Aggiorna i segreti GitHub")

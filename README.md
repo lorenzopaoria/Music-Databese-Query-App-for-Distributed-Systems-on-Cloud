@@ -264,14 +264,6 @@ python setup_nlb.py --clean
 
 **Nota:** Eliminare il database RDS può richiedere 5-10 minuti, mentre eliminare solo le altre risorse è molto più veloce.
 
-## Contribuire
-
-1. Fork del repository
-2. Crea un branch per la tua feature
-3. Commit delle modifiche
-4. Push al branch
-5. Crea una Pull Request
-
 ## Licenza
 
 Questo progetto è sviluppato per scopi educativi nell'ambito del corso di Sistemi Cloud
