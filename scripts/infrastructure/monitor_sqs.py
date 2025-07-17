@@ -17,13 +17,12 @@ def format_timestamp(timestamp_str):
     except:
         return timestamp_str
 
-def read_new_messages(sqs_client, queue_url, processed_messages):
-
+def read_and_display_messages(sqs_client, queue_url, processed_messages, is_existing=False):
     try:
         response = sqs_client.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=10,
-            WaitTimeSeconds=20,  # Long polling
+            WaitTimeSeconds=20 if not is_existing else 2,  # Breve attesa anche per messaggi esistenti
             AttributeNames=['All'],
             MessageAttributeNames=['All']
         )
@@ -48,12 +47,18 @@ def read_new_messages(sqs_client, queue_url, processed_messages):
                     new_messages.append(log_entry)
                     processed_messages.add(message_id)
                     
-                    # Mostra il nuovo messaggio
+                    # Mostra il messaggio
                     timestamp = format_timestamp(log_entry['timestamp'])
-                    print(f"\n[LOG] NUOVO MESSAGGIO - {timestamp}")
-                    print(f"      Subject: {log_entry['subject'] or 'N/A'}")
-                    print(f"      Message: {log_entry['message'][:150]}{'...' if len(log_entry['message'] or '') > 150 else ''}")
-                    print(f"      Topic: {log_entry['topic_arn'].split(':')[-1] if log_entry['topic_arn'] else 'N/A'}")
+                    if is_existing:
+                        print(f"\n[EXISTING] MESSAGGIO - {timestamp}")
+                        print(f"           Subject: {log_entry['subject'] or 'N/A'}")
+                        print(f"           Message: {log_entry['message'][:150]}{'...' if len(log_entry['message'] or '') > 150 else ''}")
+                        print(f"           Topic: {log_entry['topic_arn'].split(':')[-1] if log_entry['topic_arn'] else 'N/A'}")
+                    else:
+                        print(f"\n[NEW] NUOVO MESSAGGIO - {timestamp}")
+                        print(f"      Subject: {log_entry['subject'] or 'N/A'}")
+                        print(f"      Message: {log_entry['message'][:150]}{'...' if len(log_entry['message'] or '') > 150 else ''}")
+                        print(f"      Topic: {log_entry['topic_arn'].split(':')[-1] if log_entry['topic_arn'] else 'N/A'}")
                     print("-" * 60)
                     
                 except json.JSONDecodeError:
@@ -78,48 +83,37 @@ def monitor_queue():
         processed_messages = set()
         
         print(f"[INFO] Lettura messaggi esistenti...")
+        
+        # Prima controlliamo quanti messaggi ci sono nella coda
+        try:
+            queue_attributes = sqs_client.get_queue_attributes(
+                QueueUrl=queue_url,
+                AttributeNames=['ApproximateNumberOfMessages']
+            )
+            approx_messages = int(queue_attributes['Attributes']['ApproximateNumberOfMessages'])
+            print(f"[INFO] Messaggi approssimativi nella coda: {approx_messages}")
+        except Exception as e:
+            print(f"[WARNING] Non riesco a ottenere il numero di messaggi: {e}")
+            approx_messages = 0
+        
         existing_count = 0
         
-        while True:
-            existing_response = sqs_client.receive_message(
-                QueueUrl=queue_url,
-                MaxNumberOfMessages=10,
-                WaitTimeSeconds=1,
-                AttributeNames=['All'],
-                MessageAttributeNames=['All']
-            )
+        # Leggo tutti i messaggi esistenti - SQS restituisce max 10 messaggi per volta
+        consecutive_empty_reads = 0
+        max_empty_reads = 5  # Aumentato il numero di tentativi
+        
+        while consecutive_empty_reads < max_empty_reads:
+            existing_messages = read_and_display_messages(sqs_client, queue_url, processed_messages, is_existing=True)
             
-            existing_messages = existing_response.get('Messages', [])
-            if not existing_messages:
-                break
-                
-            for message in existing_messages:
-                message_id = message.get('MessageId')
-                if message_id not in processed_messages:
-                    try:
-                        sns_message = json.loads(message['Body'])
-                        log_entry = {
-                            'timestamp': sns_message.get('Timestamp'),
-                            'message_id': sns_message.get('MessageId'),
-                            'subject': sns_message.get('Subject'),
-                            'message': sns_message.get('Message'),
-                            'topic_arn': sns_message.get('TopicArn'),
-                            'type': sns_message.get('Type'),
-                            'receipt_handle': message['ReceiptHandle']
-                        }
-                        
-                        processed_messages.add(message_id)
-                        existing_count += 1
-                        timestamp = format_timestamp(log_entry['timestamp'])
-
-                        print(f"\n[EXISTING] MESSAGGIO #{existing_count} - {timestamp}")
-                        print(f"           Subject: {log_entry['subject'] or 'N/A'}")
-                        print(f"           Message: {log_entry['message'][:150]}{'...' if len(log_entry['message'] or '') > 150 else ''}")
-                        print(f"           Topic: {log_entry['topic_arn'].split(':')[-1] if log_entry['topic_arn'] else 'N/A'}")
-                        print("-" * 60)
-                        
-                    except json.JSONDecodeError:
-                        print(f"[WARNING] Messaggio esistente non JSON: {message['Body'][:100]}...")
+            if existing_messages:
+                existing_count += len(existing_messages)
+                consecutive_empty_reads = 0  # Reset del contatore se troviamo messaggi
+                print(f"[DEBUG] Batch completato: {len(existing_messages)} messaggi letti (totale: {existing_count})")
+            else:
+                consecutive_empty_reads += 1
+                if consecutive_empty_reads < max_empty_reads:
+                    print(f"[DEBUG] Nessun messaggio in questo batch, riprovo... ({consecutive_empty_reads}/{max_empty_reads})")
+                    time.sleep(1)  # Pausa un po' più lunga tra i tentativi
         
         if existing_count > 0:
             print(f"\n[INFO] Caricati {existing_count} messaggi esistenti")
@@ -133,7 +127,7 @@ def monitor_queue():
         
         while True:
             try:
-                new_messages = read_new_messages(sqs_client, queue_url, processed_messages)
+                new_messages = read_and_display_messages(sqs_client, queue_url, processed_messages, is_existing=False)
                 message_count += len(new_messages)
                 
                 if not new_messages:
