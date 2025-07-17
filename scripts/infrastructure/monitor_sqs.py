@@ -79,8 +79,6 @@ def monitor_queue():
     print(f"[INFO] Monitoraggio coda SNS avviato")
     print(f"[INFO] Coda: {QUEUE_NAME}")
     print(f"[INFO] In ascolto di nuovi messaggi...")
-    print(f"[INFO] Orario: Fuso orario di Roma")
-    print(f"[INFO] Premere Ctrl+C per terminare")
     print("-" * 60)
     
     message_count = 0

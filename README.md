@@ -159,7 +159,7 @@ python update_java_config_on_ec2.py
 
 ### 5: Monitoraggio Log SNS/SQS
 
-Il sistema include un'infrastruttura di logging automatica che registra tutti i messaggi SNS in una coda SQS per audit e monitoraggio.
+Il sistema include un'infrastruttura di logging automatica che registra tutti i messaggi SNS in una coda SQS per il monitoraggio.
 
 #### Monitoraggio Live dei Log
 
@@ -175,14 +175,12 @@ python monitor_sqs.py
 - Si connette alla coda SQS di logging (`musicapp-sns-logging-queue`)
 - Monitora continuamente per nuovi messaggi SNS
 - Visualizza istantaneamente ogni nuovo messaggio ricevuto
-- Ignora i messaggi già presenti (mostra solo quelli nuovi)
 
 **Caratteristiche del Sistema di Logging:**
 
 - **Persistenza**: I messaggi vengono conservati per 14 giorni
 - **Audit Completo**: Tutti i messaggi SNS vengono automaticamente registrati
 - **Monitoraggio Real-time**: Visualizzazione live dei nuovi eventi
-- **Export**: Possibilità di esportare i log in formato JSON
 
 ## Architettura del Sistema
 
