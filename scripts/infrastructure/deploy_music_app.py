@@ -663,8 +663,6 @@ def cleanup_sqs_messages(region, queue_url, receipt_handles):
 def main():
 
     if "--clean" in os.sys.argv:
-        print("\n[SECTION] Pulizia Risorse AWS")
-        print("-" * 50)
         ec2 = boto3.client('ec2', region_name=REGION)
         rds = boto3.client('rds', region_name=REGION)
         
@@ -787,6 +785,7 @@ def main():
             print(f"\n[INFO] Istanza MusicAppServer esistente e in esecuzione: {server_instance_id}. Public IP: {server_public_ip}, Private IP: {server_private_ip}")
         else:
             print("[SECTION] Deploy Istanza EC2 MusicAppServer")
+            print("-" * 50)
             server_instances = ec2_client.run_instances(
                 ImageId=AMI_ID,
                 InstanceType=INSTANCE_TYPE,
