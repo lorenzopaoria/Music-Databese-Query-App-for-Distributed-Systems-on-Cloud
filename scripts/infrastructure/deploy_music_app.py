@@ -786,7 +786,7 @@ def get_or_create_ec2_server(ec2_client, ec2_security_group_id, key_pair_name_ac
 
 def create_new_ec2_server(ec2_client, ec2_security_group_id, key_pair_name_actual, user_data_script):
 
-    print_step("Deploy dell'istanza EC2 'MusicAppServer'...")
+    print_section("Deploy Istanza EC2 MusicAppServer")
     
     server_instances = ec2_client.run_instances(
         ImageId=AMI_ID,
