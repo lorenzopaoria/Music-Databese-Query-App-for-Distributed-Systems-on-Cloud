@@ -154,25 +154,25 @@ def create_vpc_and_security_groups(ec2_client, rds_client):
         else:
             raise
 
-    # configurazione delle regole di accesso per RDS (da macchina locale per sviluppo)
-    # try:
-    #     ec2_client.authorize_security_group_ingress(
-    #         GroupId=rds_security_group_id,
-    #         IpPermissions=[
-    #             {
-    #                 'IpProtocol': 'tcp',
-    #                 'FromPort': 5432, # porta PostgreSQL
-    #                 'ToPort': 5432,
-    #                 'IpRanges':[{'CidrIp': '0.0.0.0/0', 'Description': 'Consenti accesso script locale per init DB (solo sviluppo)'}]
-    #             }
-    #         ]
-    #     )
-    #     print("[SUCCESS] Regola di ingresso per RDS autorizzata da 0.0.0.0/0 per inizializzazione locale.")
-    # except ClientError as e:
-    #     if 'InvalidPermission.Duplicate' in str(e):
-    #         print("[INFO] Regola di ingresso per RDS già presente (0.0.0.0/0->RDS).")
-    #     else:
-    #         raise
+    # configurazione delle regole di accesso per RDS (necessario per inizializzazione schema e dati)
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=rds_security_group_id,
+            IpPermissions=[
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 5432, # porta PostgreSQL
+                    'ToPort': 5432,
+                    'IpRanges':[{'CidrIp': '0.0.0.0/0', 'Description': 'Consenti accesso script locale per init DB (solo sviluppo)'}]
+                }
+            ]
+        )
+        print("[SUCCESS] Regola di ingresso per RDS autorizzata da 0.0.0.0/0 per inizializzazione locale.")
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            print("[INFO] Regola di ingresso per RDS già presente (0.0.0.0/0->RDS).")
+        else:
+            raise
     
     # configurazione delle regole di accesso per EC2 (SSH e porta applicazione)
     try:
@@ -399,7 +399,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             try:
                 conn = psycopg2.connect(conn_str_master)
                 conn.autocommit = True
-                print("[INFO] Connesso al database 'postgres' per la gestione.")
+                print("[INFO] Connesso al database 'postgres'.")
                 break
             except psycopg2.OperationalError as e:
                 print(f"[INFO] Tentativo {i+1} di connessione fallito: {e}. Attesa di 10 secondi...")
@@ -823,6 +823,9 @@ def main():
         print("=" * 60)
         print("[1] Aggiorna i segreti GitHub")
         print("    python scripts/infrastructure/update_github_secrets.py")
+        print("")
+        print("[NOTA] Se si vuole configurare NLB avviare setup_nlb.py prima che il server sia avviato")
+        print("      (rischio che il target diventi UNUSED)")
         print("")
         print("[2] (Opzionale) Configura Network Load Balancer")
         print("    python scripts/infrastructure/setup_nlb.py")

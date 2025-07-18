@@ -1,3 +1,4 @@
+#!/bin/bash
 sudo dnf update -y
 # installa Git, Docker e AWS CLI
 sudo dnf install -y  git docker awscli
