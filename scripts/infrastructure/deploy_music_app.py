@@ -69,7 +69,7 @@ def get_key_pair(ec2_client, key_name):
         return response['KeyPairs'][0]['KeyName']
     except ClientError as e:
         if "InvalidKeyPair.NotFound" in str(e):
-            print(f"[INFO] La chiave EC2 '{key_name}' non è stata trovata. Avvio della creazione...")
+            print(f"[INFO] La chiave EC2 '{key_name}' non è stata trovata. Avvio della creazione")
             
             # creazione della nuova coppia di chiavi
             key_pair = ec2_client.create_key_pair(KeyName=key_name)
@@ -213,7 +213,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
         print("-" * 50)
 
     # terminazione delle istanze EC2
-    print("[STEP] Terminazione delle istanze EC2 in corso...")
+    print("[STEP] Terminazione delle istanze EC2 in corso")
     instances = ec2_client.describe_instances(
         Filters=[{'Name': 'tag:Application', 'Values':['MusicApp']}]
     )
@@ -228,7 +228,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
     if instance_ids:
         # terminazione delle istanze
         ec2_client.terminate_instances(InstanceIds=instance_ids)
-        print(f"[INFO] Istanze EC2 terminate: {instance_ids}. Attendo la conferma di terminazione...")
+        print(f"[INFO] Istanze EC2 terminate: {instance_ids}. Attendo la conferma di terminazione")
         
         # attesa della terminazione completa
         waiter = ec2_client.get_waiter('instance_terminated')
@@ -239,14 +239,14 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
 
     # eliminazione dell'istanza RDS (no flag --nords)
     if not skip_rds:
-        print(f"[STEP] Eliminazione dell'istanza RDS '{rds_id}' in corso...")
+        print(f"[STEP] Eliminazione dell'istanza RDS '{rds_id}' in corso")
         try:
             # eliminazione del database RDS senza snapshot finale
             rds_client.delete_db_instance(
                 DBInstanceIdentifier=rds_id,
                 SkipFinalSnapshot=True
             )
-            print(f"[INFO] Istanza RDS '{rds_id}' eliminata. Attesa della cancellazione...")
+            print(f"[INFO] Istanza RDS '{rds_id}' eliminata. Attesa della cancellazione")
             
             # attesa della cancellazione completa
             waiter = rds_client.get_waiter('db_instance_deleted')
@@ -261,7 +261,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
         print(f"[SKIP] Eliminazione del database RDS '{rds_id}' saltata come richiesto.")
 
     # eliminazione dei Security Groups
-    print("[STEP] Eliminazione dei Security Groups...")
+    print("[STEP] Eliminazione dei Security Groups")
     vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values':['true']}])
     vpc_id = vpcs['Vpcs'][0]['VpcId']
     
@@ -315,7 +315,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
                 print(f"[ERROR] durante l'eliminazione del Security Group '{sg_name_current}': {e}")
     
     # eliminazione della Key Pair EC2
-    print(f"[STEP] Eliminazione della Key Pair '{key_name}'...")
+    print(f"[STEP] Eliminazione della Key Pair '{key_name}'")
     try:
         # eliminazione della chiave da AWS
         ec2_client.delete_key_pair(KeyName=key_name)
@@ -347,7 +347,7 @@ def delete_resources(ec2_client, rds_client, key_name, rds_id, rds_sg_name, ec2_
             raise
 
     # eliminazione delle risorse SNS e SQS
-    print("[STEP] Eliminazione risorse SNS e SQS...")
+    print("[STEP] Eliminazione risorse SNS e SQS")
     try:
         sns_client = boto3.client('sns', region_name=REGION)
         sqs_client = boto3.client('sqs', region_name=REGION)
@@ -388,7 +388,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
 
     print("\n[SECTION] Inizializzazione Database RDS")
     print("-" * 50)
-    print(f"[INFO] Inizializzazione del database '{db_name}' su {rds_endpoint}...")
+    print(f"[INFO] Inizializzazione del database '{db_name}' su {rds_endpoint}")
 
     # connessione al database master PostgreSQL per gestione database
     conn_str_master = f"dbname=postgres user={db_username} password={db_password} host={rds_endpoint} port=5432"
@@ -402,7 +402,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
                 print("[INFO] Connesso al database 'postgres'.")
                 break
             except psycopg2.OperationalError as e:
-                print(f"[INFO] Tentativo {i+1} di connessione fallito: {e}. Attesa di 10 secondi...")
+                print(f"[INFO] Tentativo {i+1} di connessione fallito: {e}. Attesa di 10 secondi")
                 time.sleep(10)
         if conn is None:
             raise Exception("Impossibile connettersi al database master PostgreSQL.")
@@ -410,7 +410,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         cur = conn.cursor()
 
         # terminazione delle connessioni attive al database target
-        print(f"[STEP] Terminazione delle connessioni attive al database '{db_name}'...")
+        print(f"[STEP] Terminazione delle connessioni attive al database '{db_name}'")
         try:
             cur.execute(f"""
                 SELECT pg_terminate_backend(pg_stat_activity.pid)
@@ -423,7 +423,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             print(f"[WARNING] Errore nella terminazione delle connessioni: {e}")
 
         # eliminazione del database esistente
-        print(f"[STEP] Tentativo di eliminazione del database '{db_name}' se esiste...")
+        print(f"[STEP] Tentativo di eliminazione del database '{db_name}' se esiste")
         try:
             cur.execute(f"DROP DATABASE IF EXISTS {db_name};")
             print(f"[INFO] Database '{db_name}' eliminato o non esisteva.")
@@ -432,7 +432,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             raise
 
         # creazione del nuovo database
-        print(f"[STEP] Creazione del database '{db_name}'...")
+        print(f"[STEP] Creazione del database '{db_name}'")
         cur.execute(f"CREATE DATABASE {db_name};")
         print(f"[SUCCESS] Database '{db_name}' creato.")
 
@@ -448,7 +448,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
                 print(f"[INFO] Connesso al database '{db_name}' per inizializzazione schema.")
                 break
             except psycopg2.OperationalError as e:
-                print(f"[INFO] Tentativo {i+1} di connessione al DB app fallito: {e}. Attesa di 5 secondi...")
+                print(f"[INFO] Tentativo {i+1} di connessione al DB app fallito: {e}. Attesa di 5 secondi")
                 time.sleep(5)
         if conn_app is None:
             raise Exception("Impossibile connettersi al database applicativo.")
@@ -457,7 +457,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         cur_app = conn_app.cursor()
 
         # esecuzione dello schema SQL
-        print("[STEP] Esecuzione di schema.sql...")
+        print("[STEP] Esecuzione di schema.sql")
         try:
             cur_app.execute(schema_sql)
             print("[SUCCESS] schema.sql eseguito con successo.")
@@ -466,7 +466,7 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
             raise
 
         # esecuzione del file dati SQL
-        print("[STEP] Esecuzione di data.sql...")
+        print("[STEP] Esecuzione di data.sql")
         try:
             cur_app.execute(data_sql)
             print("[SUCCESS] data.sql eseguito con successo.")
@@ -674,7 +674,7 @@ def main():
         vpc_id, rds_security_group_id, ec2_security_group_id = create_vpc_and_security_groups(ec2_client, rds_client)
 
         # STEP 4: deploy dell'istanza RDS PostgreSQL
-        print(f"\n[STEP] Tentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'...")
+        print(f"\n[STEP] Tentativo di deploy dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}'")
         rds_endpoint = None
         try:
             # verifica dell'esistenza dell'istanza RDS
@@ -685,7 +685,7 @@ def main():
             
             # attesa che l'istanza sia disponibile
             if instance_status != 'available':
-                print(f"[INFO] Attesa che l'istanza RDS '{DB_INSTANCE_IDENTIFIER}' diventi 'available'...")
+                print(f"[INFO] Attesa che l'istanza RDS '{DB_INSTANCE_IDENTIFIER}' diventi 'available'")
                 waiter = rds_client.get_waiter('db_instance_available')
                 waiter.wait(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
                 response = rds_client.describe_db_instances(DBInstanceIdentifier=DB_INSTANCE_IDENTIFIER)
@@ -693,7 +693,7 @@ def main():
                 print(f"[SUCCESS] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' ora è 'available'.")
         except ClientError as e:
             if "DBInstanceNotFound" in str(e):
-                print(f"[INFO] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' non trovata. Creazione in corso...")
+                print(f"[INFO] Istanza RDS '{DB_INSTANCE_IDENTIFIER}' non trovata. Creazione in corso")
                 
                 # creazione di una nuova istanza RDS
                 rds_client.create_db_instance(
@@ -708,7 +708,7 @@ def main():
                     EngineVersion=DB_ENGINE_VERSION,
                     PubliclyAccessible=True # Per debug e accesso locale, impostare a False per sicurezza in produzione
                 )
-                print(f"[INFO] Creazione dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}' avviata. Attesa che diventi 'available'...")
+                print(f"[INFO] Creazione dell'istanza RDS '{DB_INSTANCE_IDENTIFIER}' avviata. Attesa che diventi 'available'")
                 
                 # attesa che l'istanza sia disponibile
                 waiter = rds_client.get_waiter('db_instance_available')
@@ -723,7 +723,7 @@ def main():
             raise Exception("Impossibile ottenere l'endpoint RDS.")
 
         # STEP 5: inizializzazione del database con schema e dati
-        print("[STEP] Inizializzazione del database RDS con schema e dati...")
+        print("[STEP] Inizializzazione del database RDS con schema e dati")
         initialize_database(
             rds_endpoint=rds_endpoint,
             db_username=DB_MASTER_USERNAME,
@@ -792,7 +792,7 @@ def main():
                 ]
             )
             server_instance_id = server_instances['Instances'][0]['InstanceId']
-            print(f"[INFO] Istanza MusicAppServer avviata: {server_instance_id}. Attesa che sia 'running'...")
+            print(f"[INFO] Istanza MusicAppServer avviata: {server_instance_id}. Attesa che sia 'running'")
             
             # attesa che l'istanza sia in esecuzione
             waiter = ec2_client.get_waiter('instance_running')

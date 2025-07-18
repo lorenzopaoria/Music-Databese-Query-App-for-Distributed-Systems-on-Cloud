@@ -1,22 +1,20 @@
-# Use an official Maven image with Java 17 as the base image
+# uso di un'immagine ufficiale di Maven con Java 17 come immagine di base
 FROM maven:3.9-eclipse-temurin-17
 
-# Set the working directory inside the container
+# imposta la directory di lavoro all'interno del contenitore
 WORKDIR /app
 
-# Copy the entire project into the container
+# copia l'intero progetto all'interno del contenitore
 COPY . .
 
-# Navigate to the server project directory and run 'mvn clean install'
-# This will compile the code and download dependencies
+# Questo compilerà il codice e scaricherà le dipendenze
 RUN mvn -f mvnProject-Server/pom.xml clean install
 
-# Set the working directory to the server project for the next command
+# Imposta la directory di lavoro sulla cartella del progetto server per il comando successivo
 WORKDIR /app/mvnProject-Server
 
-# Expose port 8080 to allow traffic to the application
+# espone la porta 8080 per consentire il traffico all'applicazione
 EXPOSE 8080
 
-# Command to run the application using the 'server' profile
-# This is the command that will be executed when the container starts
+# Questo è il comando che verrà eseguito all'avvio del contenitore
 CMD ["mvn", "-Pserver", "exec:java"]

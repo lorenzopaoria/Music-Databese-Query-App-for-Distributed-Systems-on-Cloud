@@ -1,0 +1,137 @@
+@startuml
+!theme cerulean-outline
+skinparam activity {
+  BackgroundColor #F8F9FA
+  BorderColor #343A40
+  FontColor #212529
+}
+
+title **Music Database App - Workflow**
+
+start
+
+:🧑‍💻 **Deployer esegue deploy_music_app.py**;
+note right
+  Script principale di deploy
+  Legge credenziali AWS per inserirle nella EC2
+end note
+
+:🗄️ **Crea RDS PostgreSQL** 
+<color:pink>Database</color>;
+note right #FFE6F0
+  Database musicdb
+  Schema + dati inizializzati
+  Security Group configurato
+end note
+
+:☁️ **Lancia istanza EC2**
+<color:cyan>Compute</color>;
+note right #E0F7FF
+  AMI Amazon Linux
+  user_data_script.sh
+  Docker + Git + AWS installati
+end note
+
+:📢 **Setup monitoraggio SNS/SQS**
+<color:gold>Messaging</color>;
+note right #FFF8DC
+  Topic: musicapp-server-setup-complete
+  Coda: musicapp-sns-logging-queue
+  Retention: 14 giorni
+end note
+
+:🔧 **Developer esegue setup_nlb.py** (opzionale);
+if (NLB abilitato?) then (sì)
+  :⚖️ **Crea Network Load Balancer**
+  <color:orange>Load Balancer</color>;
+  note right #FFE4B5
+    Target Group: musicapp-targets
+    Health Check ogni 30s
+    TCP porta 8080
+  end note
+  :📝 **Registra EC2 nel Target Group**;
+else (no)
+  :🔗 **Modalità connessione diretta EC2**;
+endif
+
+:🔐 **Developer esegue update_github_secrets.py**;
+note right #E8F5E8
+  EC2_HOST aggiornato
+  EC2_SSH_KEY crittografato
+  Secrets GitHub pronti per CI/CD
+end note
+
+:⚙️ **Developer esegue update_java_config_on_ec2.py**;
+if (NLB rilevato?) then (sì)
+  :🔄 **Configura client per endpoint NLB**;
+  note right
+    CLIENT_TARGET = nlb_dns
+    Modalità Load Balanced
+  end note
+else (no)
+  :📡 **Configura client per EC2 diretto**;
+  note right
+    CLIENT_TARGET = ec2_public_ip
+    Modalità connessione diretta
+  end note
+endif
+
+:📤 **Git commit & push → GitHub**;
+note right
+  Trigger automatico GitHub Actions
+  deploy-ec2.yml workflow
+end note
+
+:🤖 **GitHub Actions attivato**;
+:🔑 **SSH deployment verso EC2**;
+note right #E3F2FD
+  Connessione SSH sicura
+  Validazione EC2_HOST
+  Autenticazione con EC2_SSH_KEY
+end note
+
+:🐳 **Aggiorna container Docker**
+<color:purple>Container Update</color>;
+note right #F3E5F5
+  Stop container esistente
+  Build nuova immagine
+  Run nuovo container
+  Health check (10 tentativi)
+end note
+
+:📢 **Notifica successo deployment**
+<color:gold>SNS</color>;
+
+:📱 **Java Client si connette**;
+if (Modalità connessione?) then (NLB)
+  :🔄 **Client → NLB → EC2**;
+  note right #FFE4B5
+    Load balancing automatico
+    Alta disponibilità
+    Health check continui
+  end note
+else (Diretta)
+  :📡 **Client → EC2**;
+  note right #E0F7FF
+    Connessione TCP diretta
+    Porta 8080
+  end note
+endif
+
+:🗄️ **Query database PostgreSQL**
+<color:pink>RDS Queries</color>;
+note right #FFE6F0
+  Connessione via JDBC
+  Pool di connessioni HikariCP
+  Transazioni ACID
+end note
+
+:📊 **Risultati restituiti al client**;
+
+:👀 **Developer monitora con monitor_sqs.py**;
+note right #FFF8DC
+  Messaggi in tempo reale
+end note
+
+stop
+@enduml
