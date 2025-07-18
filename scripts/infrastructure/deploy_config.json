@@ -8,5 +8,5 @@
     "key_pair_name": "my-ec2-key",
     "nlb_dns": "musicapp-nlb-b3e9ef2465b9d56f.elb.us-east-1.amazonaws.com",
     "nlb_port": 8080,
-    "nlb_enabled": true
+    "nlb_enabled": false
 }
