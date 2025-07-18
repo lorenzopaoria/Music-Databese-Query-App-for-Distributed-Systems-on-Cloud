@@ -3,7 +3,7 @@ import json
 import os
 import base64
 import subprocess
-from nacl import encoding, public
+from nacl import public
 from dotenv import load_dotenv
 
 # caricamento variabili da .env
