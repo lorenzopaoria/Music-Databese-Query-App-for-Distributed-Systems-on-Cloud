@@ -1,12 +1,9 @@
 {
-    "server_public_ip": "3.92.181.9",
-    "server_private_ip": "172.31.87.71",
+    "server_public_ip": "44.211.218.7",
+    "server_private_ip": "172.31.83.88",
     "rds_endpoint": "music-db-app-rds.cflenc1uoxga.us-east-1.rds.amazonaws.com",
     "db_username": "dbadmin",
     "db_password": "12345678",
     "db_name": "musicdb",
-    "key_pair_name": "my-ec2-key",
-    "nlb_dns": "musicapp-nlb-b3e9ef2465b9d56f.elb.us-east-1.amazonaws.com",
-    "nlb_port": 8080,
-    "nlb_enabled": false
+    "key_pair_name": "my-ec2-key"
 }
