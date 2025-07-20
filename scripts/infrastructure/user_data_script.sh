@@ -34,6 +34,9 @@ APP_DIR="/home/ec2-user/Music-Databese-Query-App-for-Distributed-Systems-on-Clou
 git clone https://github.com/lorenzopaoria/Music-Databese-Query-App-for-Distributed-Systems-on-Cloud.git $APP_DIR
 sudo chown -R ec2-user:ec2-user $APP_DIR
 
+# attendo che nlb sia pronto
+sleep 20 
+
 # verifico che il Dockerfile esista nel repository
 if [ -f "$APP_DIR/Dockerfile.dockerfile" ]; then
     # rinomino il Dockerfile esistente per Docker
