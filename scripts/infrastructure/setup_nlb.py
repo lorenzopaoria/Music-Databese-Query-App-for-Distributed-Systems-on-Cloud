@@ -170,39 +170,6 @@ def create_nlb(elbv2_client, subnet_ids):
     
     return nlb_arn, nlb_dns
 
-# abilitazione del cross-zone load balancing per il NLB
-def enable_cross_zone_load_balancing(elbv2_client, nlb_arn):
-
-    print("\n[SECTION] Abilitazione Cross-Zone Load Balancing")
-    print("-" * 50)
-    
-    try:
-        # controllo se il cross-zone load balancing è già abilitato
-        response = elbv2_client.describe_load_balancer_attributes(LoadBalancerArn=nlb_arn)
-        for attribute in response['Attributes']:
-            if attribute['Key'] == 'load_balancing.cross_zone.enabled':
-                if attribute['Value'] == 'true':
-                    print("[INFO] Cross-zone load balancing già abilitato")
-                    return
-        
-        # abilitazione del cross-zone load balancing
-        elbv2_client.modify_load_balancer_attributes(
-            LoadBalancerArn=nlb_arn,
-            Attributes=[
-                {
-                    'Key': 'load_balancing.cross_zone.enabled',
-                    'Value': 'true'
-                }
-            ]
-        )
-        
-        print("[SUCCESS] Cross-zone load balancing abilitato")
-        print("[INFO] Il traffico sarà ora distribuito uniformemente tra tutte le zone di disponibilità")
-        
-    except ClientError as e:
-        print(f"[ERROR] Errore nell'abilitazione del cross-zone load balancing: {e}")
-        raise
-
 # creazione del listener per il NLB
 def create_listener(elbv2_client, nlb_arn, target_group_arn):
 
@@ -414,9 +381,6 @@ def main():
         
         # STEP 4: creazione del Network Load Balancer
         nlb_arn, nlb_dns = create_nlb(elbv2_client, subnet_ids)
-        
-        # STEP 4.1: abilitazione del cross-zone load balancing
-        enable_cross_zone_load_balancing(elbv2_client, nlb_arn)
         
         # STEP 5: configurazione del listener
         listener_arn = create_listener(elbv2_client, nlb_arn, target_group_arn)

@@ -35,7 +35,7 @@ git clone https://github.com/lorenzopaoria/Music-Databese-Query-App-for-Distribu
 sudo chown -R ec2-user:ec2-user $APP_DIR
 
 # attendo che nlb sia pronto
-sleep 20 
+sleep 40 
 
 # verifico che il Dockerfile esista nel repository
 if [ -f "$APP_DIR/Dockerfile.dockerfile" ]; then
