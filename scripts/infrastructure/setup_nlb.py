@@ -145,7 +145,7 @@ def create_nlb(elbv2_client, subnet_ids):
     # creazione del nuovo Network Load Balancer con tutte le subnet disponibili
     response = elbv2_client.create_load_balancer(
         Name=NLB_NAME,
-        Subnets=subnet_ids,  # usa tutte le subnet disponibili
+        Subnets=subnet_ids,  # usa tutte le subnet disponibili (questa cosa non mi ha fatto dormire la notte, io gli passavo solo le prime 2)
         Type='network',
         Scheme='internet-facing',
         Tags=[
