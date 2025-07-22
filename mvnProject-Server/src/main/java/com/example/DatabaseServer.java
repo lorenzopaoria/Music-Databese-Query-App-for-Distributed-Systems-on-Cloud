@@ -16,6 +16,23 @@ import java.util.logging.Logger;
 public class DatabaseServer {
     private static final int PORT = 8080;
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());//loggin tramite libreria stampo su terminale
+    static {
+        // Custom formatter per log [INFO]: messaggio
+        java.util.logging.ConsoleHandler handler = new java.util.logging.ConsoleHandler();
+        handler.setFormatter(new java.util.logging.Formatter() {
+            @Override
+            public String format(java.util.logging.LogRecord record) {
+                String level = record.getLevel().getName();
+                return String.format("[%s]: %s%n", level, record.getMessage());
+            }
+        });
+        // Rimuovi altri handler e aggiungi il custom
+        Logger rootLogger = Logger.getLogger("");
+        for (java.util.logging.Handler h : rootLogger.getHandlers()) {
+            rootLogger.removeHandler(h);
+        }
+        rootLogger.addHandler(handler);
+    }
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();//mappa sessioni usata per i thread
     private final Map<String, Role> roles = new HashMap<>();//mappa ruoli disponibili
     private final ExecutorService threadPool;
