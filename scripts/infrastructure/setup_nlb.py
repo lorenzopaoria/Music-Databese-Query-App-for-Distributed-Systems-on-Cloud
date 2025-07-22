@@ -142,10 +142,10 @@ def create_nlb(elbv2_client, subnet_ids):
         if "LoadBalancerNotFound" not in str(e):
             raise
     
-    # creazione del nuovo Network Load Balancer
+    # creazione del nuovo Network Load Balancer con tutte le subnet disponibili
     response = elbv2_client.create_load_balancer(
         Name=NLB_NAME,
-        Subnets=subnet_ids[:2],
+        Subnets=subnet_ids,  # usa tutte le subnet disponibili
         Type='network',
         Scheme='internet-facing',
         Tags=[
