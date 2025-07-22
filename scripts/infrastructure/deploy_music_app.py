@@ -734,20 +734,20 @@ def main():
         )
 
         # rimuovo la regola di ingresso da 0.0.0.0/0 per la porta 5432 su RDS
-        # try:
-        #     ec2_client.revoke_security_group_ingress(
-        #         GroupId=rds_security_group_id,
-        #         IpProtocol='tcp',
-        #         FromPort=5432,
-        #         ToPort=5432,
-        #         CidrIp='0.0.0.0/0'
-        #     )
-        #     print("[SUCCESS] Regola di ingresso 0.0.0.0/0 rimossa dal Security Group RDS.")
-        # except ClientError as e:
-        #     if 'InvalidPermission.NotFound' in str(e):
-        #         print("[INFO] Regola di ingresso 0.0.0.0/0 già rimossa dal Security Group RDS.")
-        #     else:
-        #         print(f"[ERROR] Errore nella rimozione della regola di ingresso: {e}")
+        try:
+            ec2_client.revoke_security_group_ingress(
+                GroupId=rds_security_group_id,
+                IpProtocol='tcp',
+                FromPort=5432,
+                ToPort=5432,
+                CidrIp='0.0.0.0/0'
+            )
+            print("[SUCCESS] Regola di ingresso 0.0.0.0/0 rimossa dal Security Group RDS.")
+        except ClientError as e:
+            if 'InvalidPermission.NotFound' in str(e):
+                print("[INFO] Regola di ingresso 0.0.0.0/0 già rimossa dal Security Group RDS.")
+            else:
+                print(f"[ERROR] Errore nella rimozione della regola di ingresso: {e}")
 
         # STEP 6: configurazione delle notifiche SNS
         topic_name = 'musicapp-server-setup-complete'
