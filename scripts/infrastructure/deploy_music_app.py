@@ -491,12 +491,6 @@ def initialize_database(rds_endpoint, db_username, db_password, db_name, schema_
         if 'conn_app' in locals() and conn_app:
             conn_app.close()
 
-# recupero dell'ID account AWS
-def get_account_id():
-
-    sts = boto3.client('sts')
-    return sts.get_caller_identity()['Account']
-
 # configurazione delle notifiche SNS
 def setup_sns_notification(region, topic_name, email_address):
 
@@ -733,7 +727,7 @@ def main():
             data_sql=dati_sql_content
         )
 
-        # rimuovo la regola di ingresso da 0.0.0.0/0 per la porta 5432 su RDS
+        # rimuovo la regola di ingresso da 0.0.0.0/0 per la porta 5432 su RDS non mi serve perche db inizializzato
         try:
             ec2_client.revoke_security_group_ingress(
                 GroupId=rds_security_group_id,

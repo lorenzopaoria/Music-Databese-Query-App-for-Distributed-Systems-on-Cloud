@@ -5,59 +5,6 @@ import subprocess
 import re
 import json
 
-# esecuzione di comandi remoti via SSH
-def run_remote_command(ssh_client, command, cwd=None):
-
-    # costruzione del comando completo con directory di lavoro
-    full_command = f"cd {cwd} && {command}" if cwd else command
-    print(f"[STEP] Esecuzione comando remoto: {full_command}")
-    
-    # esecuzione del comando SSH
-    stdin, stdout, stderr = ssh_client.exec_command(full_command)
-    output = stdout.read().decode()
-    error = stderr.read().decode()
-    exit_status = stdout.channel.recv_exit_status()
-
-    # gestione speciale per i comandi Maven
-    if "mvn clean install" in command:
-        build_result = None
-        for line in output.splitlines():
-            if "BUILD SUCCESS" in line:
-                build_result = "BUILD SUCCESS"
-            elif "BUILD FAILURE" in line:
-                build_result = "BUILD FAILURE"
-        if build_result:
-            print(f"[INFO] Risultato Maven: {build_result}")
-        else:
-            print("[INFO] Risultato Maven: Sconosciuto - nessun BUILD SUCCESS/FAILURE trovato")
-    else:
-        # visualizzazione dell'output per altri comandi
-        if output:
-            print(f"[STDOUT]\n{output}")
-        if error:
-            print(f"[STDERR]\n{error}")
-
-    # gestione degli errori di esecuzione
-    if exit_status != 0:
-        print(f"[ERROR] Comando fallito con stato di uscita {exit_status}")
-        raise Exception(f"Comando '{full_command}' fallito sull'host remoto.")
-    return output
-
-# connessione SSH all'istanza EC2
-def ssh_connect(ec2_public_ip, key_pair_path):
-
-    # caricamento della chiave privata
-    key = paramiko.RSAKey.from_private_key_file(key_pair_path)
-    
-    # configurazione del client SSH
-    ssh_client = paramiko.SSHClient()
-    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    
-    # connessione all'istanza EC2
-    ssh_client.connect(hostname=ec2_public_ip, username='ec2-user', pkey=key, timeout=60)
-    print(f"[SUCCESS] Connessione SSH stabilita verso {ec2_public_ip}.")
-    return ssh_client
-
 # commit e push delle modifiche da locale
 def git_commit_and_push():
 

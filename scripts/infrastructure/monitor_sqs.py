@@ -8,7 +8,7 @@ import pytz
 REGION = 'us-east-1'
 QUEUE_NAME = 'musicapp-sns-logging-queue'
 
-# formatta il timestamp per il fuso orario locale (uso us-east-1 con aws quindi per sapere l'orario giusto lo formatto)
+# formatta il timestamp per il fuso orario Roma (uso us-east-1 con aws quindi per sapere l'orario giusto lo formatto)
 def format_timestamp(timestamp_str):
 
     if not timestamp_str:
@@ -38,10 +38,10 @@ def read_and_display_messages(sqs_client, queue_url):
         # recupero dei messaggi dalla coda SQS
         response = sqs_client.receive_message(
             QueueUrl=queue_url,
-            MaxNumberOfMessages=10,          # massimo 10 messaggi per volta
-            WaitTimeSeconds=20,              # long polling per 20 secondi
-            AttributeNames=['All'],          # tutti gli attributi del messaggio
-            MessageAttributeNames=['All']    # tutti gli attributi personalizzati
+            MaxNumberOfMessages=10,
+            WaitTimeSeconds=20,
+            AttributeNames=['All'],
+            MessageAttributeNames=['All']
         )
         
         messages = response.get('Messages', [])
