@@ -5,5 +5,8 @@
     "db_username": "dbadmin",
     "db_password": "12345678",
     "db_name": "musicdb",
-    "key_pair_name": "my-ec2-key"
+    "key_pair_name": "my-ec2-key",
+    "nlb_dns": "musicapp-nlb-bab7021a49377958.elb.us-east-1.amazonaws.com",
+    "nlb_port": 8080,
+    "nlb_enabled": true
 }
